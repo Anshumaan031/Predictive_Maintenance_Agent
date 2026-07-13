@@ -478,6 +478,22 @@ wheels = [
 ]
 
 [[package]]
+name = "fastapi"
+version = "0.139.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "annotated-doc" },
+    { name = "pydantic" },
+    { name = "starlette" },
+    { name = "typing-extensions" },
+    { name = "typing-inspection" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d3/af/a5f50ccfa659ec1802cb4ca842c23f06d906a8cc9aef6016a2caeea3d4ed/fastapi-0.139.0.tar.gz", hash = "sha256:99ab7b2d92223c76d6cf10757ab3f89d45b38267fc20b2a136cf02f6beac3145", size = 423016 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9e/7c/8e3c6ad324ea5cb36604fc3f968554887891c316d9dfde57761611d907ad/fastapi-0.139.0-py3-none-any.whl", hash = "sha256:cf15e1e9e667ddb0ad63811e60bd11390d1aac838ca4a7a23f421807b2308189", size = 130339 },
+]
+
+[[package]]
 name = "fastmcp"
 version = "3.4.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1480,6 +1496,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "context-surfaces" },
+    { name = "fastapi" },
     { name = "prompt-toolkit" },
     { name = "pydantic-ai-slim", extra = ["anthropic", "google", "mcp", "openai"] },
     { name = "python-dotenv" },
@@ -1492,6 +1509,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "context-surfaces", specifier = ">=0.0.5" },
+    { name = "fastapi", specifier = ">=0.139.0" },
     { name = "prompt-toolkit", specifier = ">=3.0.52" },
     { name = "pydantic-ai-slim", extras = ["anthropic", "mcp", "openai", "google"], specifier = ">=2.2.0" },
     { name = "python-dotenv", specifier = ">=1.2.2" },

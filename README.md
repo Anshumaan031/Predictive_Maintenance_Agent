@@ -1,41 +1,34 @@
-# Redis Iris Agent (Pydantic AI)
+# Redis Iris Agent
 
-A [Pydantic AI](https://ai.pydantic.dev) agent that gives an LLM a real **context
-layer** with [**Redis Iris**](https://redis.io/iris/):
+A [Pydantic AI](https://ai.pydantic.dev) agent that gives an LLM a real **context layer** with [Redis Iris](https://redis.io/iris/):
 
-- **Context Retriever** → live business data, through governed MCP tools that Redis
-  auto-generates from your entity model (`get_*_by_id`, `filter_*_by_*`,
-  `search_*_by_text`, `find_*_by_*_range`). No per-query code, no raw SQL, no
-  hand-written API layer.
-- **Agent Memory** → short-term (session) plus long-term memory that scales across
-  users and sessions. Durable facts are auto-promoted from a conversation in the
-  background, and exposed to the agent as `search_memory` / `store_memory` tools.
+- **Context Retriever** — live business data exposed as auto-generated MCP tools (`get_*_by_id`, `filter_*_by_*`, `search_*_by_text`, `find_*_by_*_range`). No per-query code, no hand-written API layer.
+- **Agent Memory** — short-term (session) and long-term (cross-session) memory backed by semantic vector search. Durable facts are auto-promoted from conversation history and recalled via `search_memory` / `store_memory`.
 
-Context Retriever is the **data**; Agent Memory is **who the user is**. Together
-they're a context layer: the agent recalls what a user wants and queries live data
-to satisfy it — across sessions and users, not just you. It ships with a colorful
-conversational CLI and a complete, reproducible demo (a fictitious support desk).
+Shipped with a **CrestForge Industries** predictive-maintenance demo: eight machines, fault history, open alerts, work orders, technicians, and parts — all queryable in plain English.
 
-> **Both Context Retriever and Agent Memory are in preview.** This is a
-> proof-of-concept, not a production template.
+> Context Retriever and Agent Memory are in preview. This is a proof-of-concept, not a production template.
+
+---
+
+## Demo
 
 ```
-you › It's Jordan Rivera, customer C1004. Why is my order late, and can you handle it like last time?
-  ↳ search_memory               {'query': 'Jordan Rivera C1004 preferences'}
-  ↳ get_customer_by_id          {'id': 'C1004'}
-  ↳ filter_order_by_customer_id {'value': 'C1004'}
-  ↳ filter_shipment_by_order_id {'value': 'O5099'}
+iris › What's the status on M104?
+  ↳ get_machine_by_id          {"id": "M104"}
+  ↳ search_memory              {"query": "M104 fault history"}
 
-iris ›
-Your Summit 2-Person Tent (order O5099) is 4 days delayed with UPS. Per your saved
-preference, I'm arranging an expedited reship rather than a refund — no action
-needed on your end.
+M104 (Alpha Mill) is currently in a fault state with a critical bearing
+failure. Based on your shift memory, this is a recurring issue — the same
+bearing failed six weeks ago. Work order WO-2204 is already open and assigned
+to technician T03 (Marco Rivera).
 ```
 
-That single answer combines **Agent Memory** (a preference you stated in an earlier
-session) with **Context Retriever** (the live, delayed order and shipment).
+One answer combining **Agent Memory** (the prior fault recalled from a previous shift) with **Context Retriever** (live machine state and open work orders).
 
-## How it works
+---
+
+## Architecture
 
 ```
                  ┌─────────────────────────────┐
@@ -48,141 +41,192 @@ session) with **Context Retriever** (the live, delayed order and shipment).
       Context Retriever          Agent Memory
       (MCP, X-API-Key)           (search_memory / store_memory
       auto-generated tools        + per-turn session logging)
-      over your Redis data        long-term recall across sessions
+      over your Redis data        long-term recall across shifts
                  │                      │
                  └───────► Redis Cloud ◄┘
 ```
 
-Context Retriever publishes a standard **streamable-HTTP MCP** endpoint at `/mcp`,
-authenticated with an `X-API-Key` header. Pydantic AI has a native MCP client, so
-that half is one `MCPToolset(url, headers=...)` handed to the `Agent` as a toolset.
-Agent Memory is the managed `redis-agent-memory` SDK, wrapped as two plain tools.
-See `src/redis_iris_agent/`.
+Context Retriever publishes a streamable-HTTP MCP endpoint. Pydantic AI's native MCP client wraps it as an `MCPToolset` — one line of config. Agent Memory is the `redis-agent-memory` SDK, registered as two plain tools on the agent.
 
-## Prerequisites
-
-1. A **Redis Cloud** database (the free 30 MB tier is plenty).
-2. A **Context Retriever service** over that database with your entities/fields
-   defined — either created in the Redis Cloud console, or provisioned from code
-   (see [the demo](#option-b--run-the-full-demo-northpeak-outfitters), which does
-   this for you).
-3. A **Context Retriever agent key** (sent as the `X-API-Key` header).
-4. *(Optional)* an **Agent Memory service** — its endpoint, store id, and key — to
-   enable memory.
-5. An **LLM provider API key** for whatever model you point the agent at
-   (Anthropic by default).
-6. [`uv`](https://docs.astral.sh/uv/) installed.
-
-## Setup
-
-```bash
-uv sync                 # install into a local venv
-cp .env.example .env    # then fill in your keys (see Configuration below)
-```
-
-`.env` is git-ignored — your keys never get committed.
-
-## Option A — point it at your own service
-
-If you already have a Context Retriever service, set `CONTEXT_RETRIEVER_AGENT_KEY`
-(and an LLM key) in `.env` and run the chat:
-
-```bash
-uv run redis-iris-agent
-# or: uv run python -m redis_iris_agent.cli
-```
-
-Ask questions in plain English; the agent discovers and calls whatever tools your
-service exposes. Add the three `AGENT_MEMORY_*` values to turn on memory.
-
-## Option B — run the full demo (Northpeak Outfitters)
-
-A complete, reproducible support-desk demo over fictitious data. Set `REDIS_URL`,
-`CTX_ADMIN_KEY`, the `AGENT_MEMORY_*` values, and an LLM key in `.env`, then:
-
-```bash
-# 1. Load 134 support records (customers, products, orders, shipments, tickets)
-uv run python seed_northpeak.py
-
-# 2. Provision a Context Retriever surface (5 entities -> ~29 tools) and mint an
-#    agent key. Writes the new key to _agentkey.tmp; copy it into .env as
-#    CONTEXT_RETRIEVER_AGENT_KEY.
-uv run python configure_surface.py
-
-# 3. Run the hero flow: state a preference in one session, then recall it + look up
-#    live order data in a brand-new session — both tools, one answer.
-uv run python demo_hero.py
-
-# ...or just chat with it:
-uv run redis-iris-agent
-```
-
-`seed_northpeak.py` loads additively and never flushes by default (see the warning
-in its header — `--flush` wipes the whole DB, Agent Memory keys included).
-
-### In-chat commands
-
-| Command       | What it does                                                                 |
-| ------------- | --------------------------------------------------------------------------- |
-| `/tools`      | List the Context Retriever tools the agent can call                         |
-| `/clear`      | Clear conversation history (start a fresh context)                          |
-| `/newsession` | New session, same user — working memory resets, long-term memory persists   |
-| `/whoami`     | Show the current user id / session id and whether memory is on              |
-| `/help`       | Show help                                                                   |
-| `/exit`       | Quit (also `/quit`, or Ctrl-D)                                             |
-
-## Configuration
-
-All configuration is via environment variables (loaded from `.env`).
-
-**The agent:**
-
-| Variable                      | Required | Default                                              | Purpose                                        |
-| ----------------------------- | -------- | ---------------------------------------------------- | ---------------------------------------------- |
-| `CONTEXT_RETRIEVER_AGENT_KEY` | yes      | —                                                    | Agent key, sent as the `X-API-Key` header      |
-| `CTX_MCP_URL`                 | no       | `https://gcp-us-east4.context-surfaces.redis.io/mcp` | Context Retriever MCP endpoint (region-pinned) |
-| `MODEL`                       | no       | `anthropic:claude-sonnet-4-6`                        | Any Pydantic AI model string                   |
-| `ANTHROPIC_API_KEY` (etc.)    | one      | —                                                    | API key matching your `MODEL`'s provider       |
-
-**Agent Memory** (optional — set all three to enable):
-
-| Variable                | Purpose                        |
-| ----------------------- | ------------------------------ |
-| `AGENT_MEMORY_ENDPOINT` | Agent Memory service base URL  |
-| `AGENT_MEMORY_STORE_ID` | Agent Memory store id          |
-| `AGENT_MEMORY_KEY`      | Agent Memory service key       |
-
-**Demo scripts only** (`seed_northpeak.py` / `configure_surface.py`):
-
-| Variable        | Purpose                                                                 |
-| --------------- | ----------------------------------------------------------------------- |
-| `REDIS_URL`     | Redis connection string, e.g. `redis://default:<pw>@<host>:<port>`      |
-| `CTX_ADMIN_KEY` | Context Retriever **admin** key (manages the surface, mints agent keys) |
+---
 
 ## Project layout
 
 ```
-src/redis_iris_agent/
-  config.py   # env loading + validation (Context Retriever + optional Agent Memory)
-  agent.py    # builds the Pydantic AI agent + CR MCP toolset + memory tools
-  memory.py   # optional Agent Memory wrapper (session logging + long-term recall)
-  cli.py      # rich/prompt-toolkit chat loop with history + /newsession
-seed_northpeak.py      # load the demo support dataset into Redis
-configure_surface.py   # provision a Context Retriever surface + mint an agent key
-demo_hero.py           # the combined Context-Retriever + Agent-Memory demo
+src/
+├── agent/
+│   ├── agent.py          ← Pydantic AI Agent + MCPToolset construction
+│   ├── cli.py            ← Rich/prompt-toolkit chat REPL
+│   ├── config.py         ← env loading + Settings dataclass
+│   ├── memory.py         ← MemoryService wrapper (session log, search, store)
+│   ├── model_provider.py ← multi-provider model builder (Anthropic, OpenAI, etc.)
+│   └── prompts.py        ← system prompt, memory prompt, /help text
+├── api/
+│   ├── app.py            ← FastAPI server (all routes, SSE streaming, lifespan)
+│   ├── state.py          ← singleton AppState for the HTTP server
+│   └── models.py         ← Pydantic request/response schemas
+├── crestforge/
+│   ├── configure.py      ← provision the Context Retriever surface + mint agent key
+│   └── seed.py           ← seed 28 Redis records + 6 pre-built long-term memories
+└── utils/
+    └── tool_names.py     ← safe_name_map() for sanitizing MCP tool names
+
+docs/
+├── api/TESTING_GUIDE.md  ← how to test every HTTP endpoint
+├── CRESTFORGE_USE_CASE.md
+└── CRESTFORGE_SETUP_GUIDE.md
 ```
+
+---
+
+## Prerequisites
+
+1. A **Redis Cloud** database (free 30 MB tier is enough).
+2. A **Context Retriever service** over that database — created in the Redis Cloud console, or provisioned by `crestforge-config` (see [Setup](#setup)).
+3. A **Context Retriever agent key** (scoped read key for the running agent).
+4. An **LLM provider API key** (Anthropic, OpenAI, Google, or OpenRouter).
+5. *(Optional)* **Agent Memory** service — endpoint, store id, and key.
+6. [`uv`](https://docs.astral.sh/uv/) installed.
+
+---
+
+## Setup
+
+```bash
+uv sync
+cp .env.example .env   # fill in your keys (see Configuration below)
+```
+
+### Run the CrestForge demo from scratch
+
+```bash
+# 1. Seed Redis: 8 machines, alerts, work orders, fault history, technicians, parts
+#    + 6 pre-built long-term memories so the demo starts with institutional knowledge
+uv run crestforge-seed
+
+# 2. Provision the Context Retriever surface (~35 tools) and mint an agent key.
+#    The key is written to _agentkey.tmp — copy it to .env as CONTEXT_RETRIEVER_AGENT_KEY
+uv run crestforge-config
+
+# 3. Chat
+uv run iris-agent
+```
+
+### Point it at your own Context Retriever service
+
+Set `CONTEXT_RETRIEVER_AGENT_KEY` (and an LLM key) in `.env` and run:
+
+```bash
+uv run iris-agent
+```
+
+---
+
+## Running as an HTTP API
+
+The agent also ships as a FastAPI server with SSE streaming — useful for driving a web UI.
+
+```bash
+python -m uvicorn src.api.app:app --reload
+# or: uv run iris-api
+```
+
+Interactive docs at `http://localhost:8000/docs`.
+
+### Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/chat` | SSE stream: `thinking` → `tool_call`(s) → `text` → `done` |
+| `POST` | `/chat/sync` | Same result as `/chat` but plain JSON — use in Swagger UI / Postman |
+| `GET` | `/session` | Current owner, session ID, active machine, memory status |
+| `POST` | `/session/machine` | Set active machine (`{"machine_id": "M104"}`) |
+| `POST` | `/session/new-shift` | Rotate session ID, clear history (long-term memory persists) |
+| `DELETE` | `/session/history` | Clear conversation history only |
+| `GET` | `/tools` | List all Context Retriever MCP tools |
+| `GET` | `/health` | Provider, model, tool count, memory status |
+
+See [`docs/api/TESTING_GUIDE.md`](docs/api/TESTING_GUIDE.md) for curl examples and a recommended test sequence.
+
+---
+
+## CLI commands
+
+| Command | Effect |
+|---|---|
+| `/machine <id>` | Focus on a machine — prepended to every prompt automatically |
+| `/newshift` | New shift: clear history and active machine, rotate session ID. Long-term memory persists. |
+| `/tools` | List all Context Retriever MCP tools |
+| `/whoami` | Show owner ID, session ID, active machine, memory status |
+| `/clear` | Clear conversation history |
+| `/help` | Show all commands |
+| `/exit` | Quit (also `/quit` or Ctrl-D) |
+
+---
+
+## Configuration
+
+All values are loaded from `.env`.
+
+### Agent (required)
+
+| Variable | Purpose |
+|---|---|
+| `CONTEXT_RETRIEVER_AGENT_KEY` | Agent key sent as `X-API-Key` to the MCP endpoint |
+| `PROVIDER` | LLM provider: `anthropic`, `openai`, `google`, or `openrouter` |
+| `MODEL_NAME` | Model name for the chosen provider (e.g. `claude-sonnet-4-6`) |
+| `API_KEY` | API key for the chosen provider |
+
+### Agent (optional)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `CTX_MCP_URL` | `https://gcp-us-east4.context-surfaces.redis.io/mcp` | Context Retriever endpoint |
+
+### Agent Memory (optional — set all three to enable)
+
+| Variable | Purpose |
+|---|---|
+| `AGENT_MEMORY_ENDPOINT` | Agent Memory service base URL |
+| `AGENT_MEMORY_STORE_ID` | Agent Memory store ID |
+| `AGENT_MEMORY_KEY` | Agent Memory service key |
+
+### Setup scripts only (`crestforge-config` / `crestforge-seed`)
+
+| Variable | Purpose |
+|---|---|
+| `REDIS_URL` | Direct Redis connection string |
+| `CTX_ADMIN_KEY` | Context Retriever admin key (manages surfaces, mints agent keys) |
+
+### Multi-provider example
+
+```env
+# Anthropic
+PROVIDER=anthropic
+MODEL_NAME=claude-sonnet-4-6
+API_KEY=sk-ant-...
+
+# OpenRouter
+PROVIDER=openrouter
+MODEL_NAME=meta-llama/llama-3.3-70b-instruct
+API_KEY=sk-or-...
+
+# Google
+PROVIDER=google
+MODEL_NAME=gemini-2.5-pro
+API_KEY=AIza...
+```
+
+---
 
 ## Notes
 
-- **Access is scoped server-side** by the agent key, so the agent only ever sees the
-  data that key is allowed to reach — the thing a folder of files can't give you.
-- LLM providers reject tool names with spaces or odd characters. Context Retriever
-  derives tool names from your entity names, so an entity named with a space yields
-  an invalid tool name; the agent sanitizes those client-side. Prefer single-word,
-  space-free entity names.
-- The field's index type decides the generated tool: **tag → `filter`**, **text →
-  `search`**, **numeric → `find…range`**, key → `get…by_id`. A field is one index
-  type. That's why an entity with no text field has no `search` tool.
+- **MCP connection is opened once** (`async with agent:`), not per-turn — avoids reconnect latency on every message.
+- **Memory never breaks the chat** — `log_turn` swallows exceptions silently so a memory outage doesn't crash the conversation.
+- **Memory is scoped server-side** by `owner_id` — the agent cannot read or write another user's memories.
+- **Tool name sanitization** — Anthropic requires tool names matching `^[a-zA-Z0-9_-]{1,128}$`. Context Retriever derives names from entity names, so entities with spaces produce invalid names. `safe_name_map()` renames them transparently before the model sees them.
+
+---
 
 ## License
 

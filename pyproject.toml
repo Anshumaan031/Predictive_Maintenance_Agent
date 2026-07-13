@@ -18,6 +18,7 @@ classifiers = [
 requires-python = ">=3.11"
 dependencies = [
     "context-surfaces>=0.0.5",
+    "fastapi>=0.139.0",
     "prompt-toolkit>=3.0.52",
     "pydantic-ai-slim[anthropic,mcp,openai,google]>=2.2.0",
     "python-dotenv>=1.2.2",
@@ -32,6 +33,7 @@ Repository = "https://github.com/coleam00/redis-iris-agent"
 
 [project.scripts]
 iris-agent          = "src.agent.cli:main"
+iris-api            = "src.api.app:main"
 crestforge-config   = "src.crestforge.configure:main"
 crestforge-seed     = "src.crestforge.seed:main"
 
