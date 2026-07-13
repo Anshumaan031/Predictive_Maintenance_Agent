@@ -11,11 +11,10 @@ from dataclasses import dataclass
 
 from dotenv import load_dotenv
 
-# Default MCP endpoint for the Context Retriever. This is the region-pinned host
-# Redis documents in the official build tutorial's `.env`
-# (CTX_MCP_URL=https://gcp-us-east4.context-surfaces.redis.io/mcp). Override with
-# CTX_MCP_URL if your service lives in a different region.
+# Default MCP endpoint for the Context Retriever. Override with CTX_MCP_URL if
+# your service lives in a different region.
 DEFAULT_MCP_URL = "https://gcp-us-east4.context-surfaces.redis.io/mcp"
+
 
 class ConfigError(RuntimeError):
     """Raised when required configuration is missing."""
@@ -27,9 +26,9 @@ class Settings:
 
     agent_key: str
     mcp_url: str
-    # Agent Memory (managed Redis Iris service) — all three required to enable
-    # memory. When any is missing, the agent runs Context-Retriever-only and the
-    # memory tools are simply not registered.
+    # Agent Memory — all three must be present to enable memory. When any is
+    # missing the agent runs Context-Retriever-only and memory tools are not
+    # registered.
     memory_endpoint: str | None = None
     memory_store_id: str | None = None
     memory_key: str | None = None
@@ -42,7 +41,7 @@ class Settings:
 
 def load_settings() -> Settings:
     """Load and validate settings from the environment / .env file."""
-    load_dotenv()  # no-op if there is no .env; env vars still win
+    load_dotenv()
 
     agent_key = os.getenv("CONTEXT_RETRIEVER_AGENT_KEY", "").strip()
     if not agent_key:

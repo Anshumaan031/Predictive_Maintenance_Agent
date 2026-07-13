@@ -1,43 +1,37 @@
-"""Redis Iris **Agent Memory** integration for the Pydantic AI agent.
+"""Redis Iris Agent Memory integration for the Pydantic AI agent.
 
 Context Retriever gives the agent *business data* (live records). Agent Memory
 gives it *conversation* memory:
 
 * **Session (working / short-term) memory** — an ordered log of the current
   conversation's events, scoped by ``session_id``, with a TTL. The managed
-  service automatically summarizes/trims it and, in the background,
-  **promotes** high-signal facts from it into long-term memory. That background
-  promotion is the whole point: durable memory with no promotion/pruning code.
-* **Long-term memory** — cross-session facts (preferences, past decisions)
-  persisted per user and retrieved by **semantic (vector) search + metadata
-  filters**, regardless of which session created them.
+  service automatically summarises/trims it and, in the background,
+  **promotes** high-signal facts into long-term memory.
+* **Long-term memory** — cross-session facts persisted per user and retrieved
+  by semantic (vector) search + metadata filters, regardless of session.
 
-We expose long-term memory to the model as two ordinary tools
-(``search_memory`` / ``store_memory``) so you *see* the recall/write happen as
-tool calls right next to the Context Retriever tools — one context layer, all
-tools. We also log each turn as a session event so the service's background
-extraction can promote durable facts on its own.
-
-Managed SDK (``redis-agent-memory``) surface, per Redis's official
-``agent_memory.ipynb`` notebook:
-    AgentMemory(endpoint, store_id=..., api_key=...)
-    .add_session_event_async(session_id, actor_id, role, content, created_at)
-    .search_long_term_memory_async(request={"text": ..., "filter": {...}})
-    .bulk_create_long_term_memories_async(memories=[{id, owner_id, text}])
+Long-term memory is exposed to the model as two ordinary tools
+(``search_memory`` / ``store_memory``) so recall/write appear as tool calls
+alongside the Context Retriever tools — one context layer, all tools. Each turn
+is also logged as a session event so the service's background extractor can
+promote durable facts without any promotion code on our side.
 """
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 
+logger = logging.getLogger(__name__)
+
 try:  # optional dependency — Context Retriever works without it
-    from redis_agent_memory import AgentMemory, models
+    from redis_agent_memory import AgentMemory, models as _memory_models
 
     _IMPORT_ERROR: Exception | None = None
-except Exception as exc:  # noqa: BLE001 - surface a friendly message later
+except Exception as exc:  # noqa: BLE001
     AgentMemory = None  # type: ignore[assignment]
-    models = None  # type: ignore[assignment]
+    _memory_models = None  # type: ignore[assignment]
     _IMPORT_ERROR = exc
 
 from .config import Settings
@@ -52,9 +46,9 @@ class Identity:
     """Whose memory we read/write.
 
     Mutable on purpose: ``/newsession`` rotates ``session_id`` while keeping the
-    same ``owner_id``, which is exactly how we demo cross-session recall — a fact
-    stored (or auto-promoted) under one session is recalled in the next, because
-    long-term memory is keyed on the *user*, not the session.
+    same ``owner_id``, demonstrating cross-session recall — facts stored under
+    one session are recalled in the next because long-term memory is keyed on
+    the *user*, not the session.
     """
 
     owner_id: str
@@ -70,11 +64,13 @@ class MemoryService:
 
     @classmethod
     def from_settings(cls, settings: Settings, identity: Identity) -> "MemoryService":
-        if AgentMemory is None:  # pragma: no cover - import guard
+        """Instantiate from resolved settings. Raises ``RuntimeError`` if the
+        ``redis-agent-memory`` package is not importable."""
+        if AgentMemory is None:
             raise RuntimeError(
                 "Agent Memory is configured but the 'redis-agent-memory' package "
                 f"is not importable: {_IMPORT_ERROR!r}. Run `uv sync`."
-            )
+            ) from _IMPORT_ERROR
         client = AgentMemory(
             settings.memory_endpoint,
             store_id=settings.memory_store_id,
@@ -87,22 +83,23 @@ class MemoryService:
         try:
             await self._client.health_async()
             return True
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Agent Memory health check failed: %s", exc)
             return False
 
     async def log_turn(self, role: str, text: str) -> None:
         """Append one conversation event to session (working) memory.
 
-        ``role`` is "user" or "assistant". Failures are swallowed — memory
-        logging must never break the chat loop.
+        ``role`` is ``"user"`` or ``"assistant"``. Failures are swallowed so
+        memory logging never interrupts the chat loop.
         """
         if not text:
             return
         try:
             msg_role = (
-                models.MessageRole.USER
+                _memory_models.MessageRole.USER
                 if role == "user"
-                else models.MessageRole.ASSISTANT
+                else _memory_models.MessageRole.ASSISTANT
             )
             await self._client.add_session_event_async(
                 session_id=self.identity.session_id,
@@ -111,8 +108,8 @@ class MemoryService:
                 content=[{"text": text}],
                 created_at=_now_ms(),
             )
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("log_turn failed (role=%s): %s", role, exc)
 
     async def search(self, query: str) -> str:
         """Semantic search over THIS user's long-term memory. Returns JSON text."""
@@ -146,6 +143,6 @@ def _to_text(obj: object) -> str:
         if callable(fn):
             try:
                 return fn()
-            except Exception:  # noqa: BLE001
-                continue
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("_to_text: %s() failed: %s", attr, exc)
     return str(obj)

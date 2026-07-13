@@ -2,13 +2,17 @@
 
 Keeps full conversation history in memory (Pydantic AI ``message_history``),
 shows which Context Retriever MCP tools the agent called for each answer, and
-supports a few slash commands.
+supports a set of slash commands.
+
+Run:
+    python -m src.agent.cli
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import sys
 
@@ -22,48 +26,42 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from .agent import build_agent, build_toolset, safe_name_map
+from .agent import build_agent, build_toolset
 from .config import ConfigError, Settings, load_settings
 from .memory import Identity, MemoryService
-from .model_provider import ModelConfigError, build_model
+from .model_provider import ModelConfigError
+from .prompts import HELP
+from ..utils.tool_names import safe_name_map
 
 console = Console()
 
 # Demo identity. In a real multi-user app these come from your auth layer; here
-# we hardcode one user and rotate the session id with /newshift.
-# Must match the owner_id used in seed_crestforge.py so pre-seeded memories
-# are found by the agent's memory search.
+# one user is hardcoded and the session id is rotated with /newsession.
+# Must match the owner_id in seed_crestforge so pre-seeded memories are found.
 DEFAULT_OWNER_ID = "machine-floor"
 DEFAULT_SESSION_ID = "session-1"
 
-HELP = """\
-[bold]Commands[/bold]
-  [cyan]/help[/cyan]            Show this help
-  [cyan]/tools[/cyan]           List the Context Retriever tools the agent can call
-  [cyan]/clear[/cyan]           Clear the conversation history (fresh context)
-  [cyan]/machine <id>[/cyan]    Set the active machine context (e.g. /machine M104)
-  [cyan]/newshift[/cyan]        Start a new shift — clears working memory, long-term
-                  memory persists (the cross-shift recall demo)
-  [cyan]/newsession[/cyan]      Alias for /newshift
-  [cyan]/whoami[/cyan]          Show the current user id / session id / active machine
-  [cyan]/exit[/cyan]            Quit (also: /quit, Ctrl-D)
-"""
+_MAX_INPUT = 8_000
 
 
 def _banner(settings: Settings, identity: Identity, memory_on: bool) -> Panel:
+    provider = os.getenv("PROVIDER", "?")
+    model_name = os.getenv("MODEL_NAME", "?")
     body = Text()
     body.append("Redis Iris ", style="bold red")
     body.append("agent\n", style="bold white")
-    body.append("Ask about your data in plain English. Live data comes through "
-                "the Context Retriever MCP tools; ", style="white")
+    body.append(
+        "Ask about your data in plain English. Live data comes through "
+        "the Context Retriever MCP tools; ",
+        style="white",
+    )
     if memory_on:
-        body.append("what you tell it is remembered across sessions via Agent "
-                    "Memory.\n\n", style="white")
+        body.append(
+            "what you tell it is remembered across sessions via Agent Memory.\n\n",
+            style="white",
+        )
     else:
         body.append("Agent Memory is off (data only).\n\n", style="white")
-    import os
-    provider = os.getenv("PROVIDER", "?")
-    model_name = os.getenv("MODEL_NAME", "?")
     body.append("model    ", style="dim")
     body.append(f"{provider}:{model_name}\n", style="cyan")
     body.append("data     ", style="dim")
@@ -81,11 +79,12 @@ def _banner(settings: Settings, identity: Identity, memory_on: bool) -> Panel:
 
 def _render_tool_calls(new_messages: list[ModelMessage]) -> None:
     """Print a dim line for each Context Retriever tool the agent invoked."""
-    calls: list[ToolCallPart] = []
-    for message in new_messages:
-        for part in getattr(message, "parts", []):
-            if isinstance(part, ToolCallPart):
-                calls.append(part)
+    calls: list[ToolCallPart] = [
+        part
+        for message in new_messages
+        for part in getattr(message, "parts", [])
+        if isinstance(part, ToolCallPart)
+    ]
     for call in calls:
         args = call.args_as_dict() if hasattr(call, "args_as_dict") else call.args
         console.print(
@@ -100,17 +99,23 @@ def _render_tool_calls(new_messages: list[ModelMessage]) -> None:
 async def _list_tools(toolset) -> None:
     try:
         tools = await toolset.list_tools()
-    except Exception as exc:  # noqa: BLE001 - surface any transport error nicely
+    except Exception as exc:  # noqa: BLE001
         console.print(f"[red]Could not list tools:[/red] {exc}")
         return
 
     if not tools:
-        console.print("[yellow]No tools available.[/yellow] "
-                      "Is the Context Retriever service configured with entities?")
+        console.print(
+            "[yellow]No tools available.[/yellow] "
+            "Is the Context Retriever service configured with entities?"
+        )
         return
 
-    table = Table(title=f"Context Retriever tools ({len(tools)})",
-                  title_style="bold red", border_style="dim", show_lines=False)
+    table = Table(
+        title=f"Context Retriever tools ({len(tools)})",
+        title_style="bold red",
+        border_style="dim",
+        show_lines=False,
+    )
     table.add_column("Tool", style="green", no_wrap=True)
     table.add_column("Description", style="white")
     for tool in tools:
@@ -123,19 +128,22 @@ async def _run() -> int:
     try:
         settings = load_settings()
     except ConfigError as exc:
-        console.print(Panel(str(exc), title="[red]Configuration needed[/red]",
-                            border_style="red"))
+        console.print(
+            Panel(str(exc), title="[red]Configuration needed[/red]", border_style="red")
+        )
         return 1
     except ModelConfigError as exc:
-        console.print(Panel(str(exc), title="[red]Model configuration needed[/red]",
-                            border_style="red"))
+        console.print(
+            Panel(
+                str(exc),
+                title="[red]Model configuration needed[/red]",
+                border_style="red",
+            )
+        )
         return 1
 
     toolset = build_toolset(settings)
 
-    # Fetch the tool names up front so we can (a) greet with the live count and
-    # (b) rename any tools whose auto-generated names an LLM provider rejects
-    # (e.g. an entity named "job queue" -> "get_job queue_by_id" with a space).
     tool_names: list[str] | None = None
     connect_error: str | None = None
     try:
@@ -146,8 +154,6 @@ async def _run() -> int:
     name_map = safe_name_map(tool_names) if tool_names else {}
     agent_toolset = toolset.renamed(name_map) if name_map else toolset
 
-    # Agent Memory (optional). Only wired in when all three memory values are set;
-    # otherwise the agent is Context-Retriever-only and nothing memory-related runs.
     identity = Identity(owner_id=DEFAULT_OWNER_ID, session_id=DEFAULT_SESSION_ID)
     active_machine: str | None = None
     memory: MemoryService | None = None
@@ -156,9 +162,11 @@ async def _run() -> int:
         try:
             memory = MemoryService.from_settings(settings, identity)
             reachable = await memory.health()
-            memory_note = ("" if reachable else
-                           "  [yellow](memory endpoint not reachable — check "
-                           "AGENT_MEMORY_* values)[/yellow]")
+            if not reachable:
+                memory_note = (
+                    "  [yellow](memory endpoint not reachable — check "
+                    "AGENT_MEMORY_* values)[/yellow]"
+                )
         except Exception as exc:  # noqa: BLE001
             memory = None
             memory_note = f"  [yellow](memory disabled: {exc})[/yellow]"
@@ -166,10 +174,14 @@ async def _run() -> int:
     try:
         agent = build_agent(settings, agent_toolset, memory=memory)
     except (UserError, ModelConfigError) as exc:
-        console.print(Panel(
-            f"{exc}\n\n"
-            "Check that PROVIDER, MODEL_NAME, and API_KEY are set correctly in your .env.",
-            title="[red]Model configuration needed[/red]", border_style="red"))
+        console.print(
+            Panel(
+                f"{exc}\n\n"
+                "Check that PROVIDER, MODEL_NAME, and API_KEY are set correctly in your .env.",
+                title="[red]Model configuration needed[/red]",
+                border_style="red",
+            )
+        )
         return 1
 
     console.print(_banner(settings, identity, memory_on=memory is not None))
@@ -177,25 +189,31 @@ async def _run() -> int:
         console.print(memory_note)
 
     if tool_names is not None:
-        note = (f"  [dim]({len(name_map)} name(s) sanitized for the model)[/dim]"
-                if name_map else "")
-        console.print(f"[dim]Connected. [green]{len(tool_names)}[/green] "
-                      f"Context Retriever tools available.[/dim]{note}\n")
+        sanitised_note = (
+            f"  [dim]({len(name_map)} name(s) sanitised for the model)[/dim]"
+            if name_map
+            else ""
+        )
+        console.print(
+            f"[dim]Connected. [green]{len(tool_names)}[/green] "
+            f"Context Retriever tools available.[/dim]{sanitised_note}\n"
+        )
     else:
-        hint = ""
+        auth_hint = ""
         if connect_error and ("401" in connect_error or "403" in connect_error):
-            hint = ("  [dim]Looks like an auth failure — check "
-                    "CONTEXT_RETRIEVER_AGENT_KEY (and CTX_MCP_URL region).[/dim]")
-        console.print(f"[yellow]Could not reach the Context Retriever:[/yellow] "
-                      f"{connect_error}{hint}\n")
+            auth_hint = (
+                "  [dim]Looks like an auth failure — check "
+                "CONTEXT_RETRIEVER_AGENT_KEY (and CTX_MCP_URL region).[/dim]"
+            )
+        console.print(
+            f"[yellow]Could not reach the Context Retriever:[/yellow] "
+            f"{connect_error}{auth_hint}\n"
+        )
 
     session: PromptSession[str] = PromptSession(history=InMemoryHistory())
     history: list[ModelMessage] = []
 
-    # `async with agent` opens the MCP connection once and keeps it open for the
-    # whole chat session, instead of reconnecting on every message.
     async with agent:
-
         while True:
             try:
                 user_input = (await session.prompt_async("you › ")).strip()
@@ -207,57 +225,78 @@ async def _run() -> int:
                 continue
 
             lowered = user_input.lower()
+
             if lowered in ("/exit", "/quit"):
                 console.print("[dim]bye[/dim]")
                 return 0
+
             if lowered == "/help":
                 console.print(HELP)
                 continue
+
             if lowered == "/clear":
                 history = []
                 console.print("[dim]conversation history cleared[/dim]\n")
                 continue
+
             if lowered.startswith("/machine"):
                 parts = user_input.split(None, 1)
                 if len(parts) < 2 or not parts[1].strip():
-                    console.print("[yellow]Usage: /machine <id>  (e.g. /machine M104)[/yellow]\n")
+                    console.print(
+                        "[yellow]Usage: /machine <id>  (e.g. /machine M104)[/yellow]\n"
+                    )
                 else:
                     active_machine = parts[1].strip().upper()
-                    console.print(f"[dim]active machine set to[/dim] [cyan]{active_machine}[/cyan]\n")
+                    console.print(
+                        f"[dim]active machine set to[/dim] [cyan]{active_machine}[/cyan]\n"
+                    )
                 continue
+
             if lowered == "/whoami":
-                machine_str = (f"  [dim]machine[/dim] [cyan]{active_machine}[/cyan]"
-                               if active_machine else "")
-                console.print(f"[dim]user[/dim] [cyan]{identity.owner_id}[/cyan]  "
-                              f"[dim]session[/dim] [cyan]{identity.session_id}[/cyan]"
-                              f"  [dim]memory[/dim] "
-                              f"{'[green]on[/green]' if memory else '[yellow]off[/yellow]'}"
-                              f"{machine_str}\n")
+                machine_str = (
+                    f"  [dim]machine[/dim] [cyan]{active_machine}[/cyan]"
+                    if active_machine
+                    else ""
+                )
+                console.print(
+                    f"[dim]user[/dim] [cyan]{identity.owner_id}[/cyan]  "
+                    f"[dim]session[/dim] [cyan]{identity.session_id}[/cyan]"
+                    f"  [dim]memory[/dim] "
+                    f"{'[green]on[/green]' if memory else '[yellow]off[/yellow]'}"
+                    f"{machine_str}\n"
+                )
                 continue
+
             if lowered in ("/newshift", "/newsession"):
-                # Same user, brand-new session: working-memory context resets, but
-                # long-term memory persists. This is the cross-shift recall demo.
                 history = []
                 active_machine = None
-                nxt = re.sub(
-                    r"(\d+)$",
-                    lambda m: str(int(m.group()) + 1),
-                    identity.session_id,
-                ) if re.search(r"\d+$", identity.session_id) else f"{identity.session_id}-2"
+                nxt = (
+                    re.sub(
+                        r"(\d+)$",
+                        lambda m: str(int(m.group()) + 1),
+                        identity.session_id,
+                    )
+                    if re.search(r"\d+$", identity.session_id)
+                    else f"{identity.session_id}-2"
+                )
                 identity.session_id = nxt
                 if memory:
-                    console.print(f"[dim]new shift started — session[/dim] [cyan]{nxt}[/cyan]"
-                                  f"[dim] — working memory cleared, long-term memory "
-                                  f"persists. Ask it what it remembers.[/dim]\n")
+                    console.print(
+                        f"[dim]new shift started — session[/dim] [cyan]{nxt}[/cyan]"
+                        f"[dim] — working memory cleared, long-term memory "
+                        f"persists. Ask it what it remembers.[/dim]\n"
+                    )
                 else:
-                    console.print(f"[dim]new shift — session[/dim] [cyan]{nxt}[/cyan] "
-                                  f"[yellow](memory off — nothing persists)[/yellow]\n")
+                    console.print(
+                        f"[dim]new shift — session[/dim] [cyan]{nxt}[/cyan] "
+                        f"[yellow](memory off — nothing persists)[/yellow]\n"
+                    )
                 continue
+
             if lowered == "/tools":
                 await _list_tools(toolset)
                 continue
 
-            _MAX_INPUT = 8_000
             if len(user_input) > _MAX_INPUT:
                 console.print(
                     f"[yellow]Input truncated to {_MAX_INPUT} characters "
@@ -265,21 +304,19 @@ async def _run() -> int:
                 )
                 user_input = user_input[:_MAX_INPUT]
 
-            # Prepend machine context so the agent always knows which machine is
-            # active without the user having to repeat it every message.
-            prompt = (f"[Active machine: {active_machine}]\n{user_input}"
-                      if active_machine else user_input)
+            prompt = (
+                f"[Active machine: {active_machine}]\n{user_input}"
+                if active_machine
+                else user_input
+            )
 
-            # Log the user's turn into session (working) memory. The service
-            # summarizes/trims it and promotes durable facts to long-term in the
-            # background — no promotion code on our side.
             if memory:
                 await memory.log_turn("user", user_input)
 
             try:
                 with console.status("[red]thinking…[/red]", spinner="dots"):
                     result = await agent.run(prompt, message_history=history)
-            except Exception as exc:  # noqa: BLE001 - keep the chat loop alive
+            except Exception as exc:  # noqa: BLE001
                 console.print(f"[red]Error:[/red] {exc}\n")
                 continue
 
@@ -292,7 +329,6 @@ async def _run() -> int:
             if memory:
                 await memory.log_turn("assistant", result.output)
 
-            # Carry the full running transcript so the next turn has context.
             history = result.all_messages()
 
 
@@ -300,7 +336,7 @@ def main() -> None:
     """Console-script entry point."""
     # The Context Retriever server doesn't implement the optional MCP
     # session-DELETE endpoint, so the client logs a harmless "Session
-    # termination failed: 404" warning on close. Hush it.
+    # termination failed: 404" on close. Silence it.
     logging.getLogger("mcp.client.streamable_http").setLevel(logging.ERROR)
     try:
         raise SystemExit(asyncio.run(_run()))

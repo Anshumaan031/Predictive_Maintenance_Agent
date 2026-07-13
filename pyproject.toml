@@ -31,8 +31,13 @@ dependencies = [
 Repository = "https://github.com/coleam00/redis-iris-agent"
 
 [project.scripts]
-redis-iris-agent = "redis_iris_agent.cli:main"
+iris-agent          = "src.agent.cli:main"
+crestforge-config   = "src.crestforge.configure:main"
+crestforge-seed     = "src.crestforge.seed:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
