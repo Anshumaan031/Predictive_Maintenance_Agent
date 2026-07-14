@@ -16,8 +16,11 @@ from pydantic_ai.mcp import MCPToolset
 from .config import Settings
 from .model_provider import build_model
 from .prompts import MEMORY_PROMPT, SYSTEM_PROMPT
+from .tools import attach_write_tools
 
 if TYPE_CHECKING:
+    import redis.asyncio as aioredis
+
     from .memory import MemoryService
 
 
@@ -33,6 +36,7 @@ def build_agent(
     settings: Settings,
     toolset: MCPToolset,
     memory: "MemoryService | None" = None,
+    redis_client: "aioredis.Redis | None" = None,
 ) -> Agent:
     """Create the Pydantic AI agent backed by the Context Retriever tools.
 
@@ -48,6 +52,8 @@ def build_agent(
     )
     if memory is not None:
         _attach_memory_tools(agent, memory)
+    if redis_client is not None:
+        attach_write_tools(agent, redis_client)
     return agent
 
 

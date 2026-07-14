@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HOA Budget Chat — Test UI</title>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    /* ── Azure Portal Design System ─────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --azure-blue:       #0078d4;
+      --azure-blue-hover: #106ebe;
+      --azure-blue-light: #deecf9;
+      --azure-dark:       #1b1b1b;
+      --panel-bg:         #f3f2f1;
+      --sidebar-bg:       #faf9f8;
+      --border:           #edebe9;
+      --border-med:       #c8c6c4;
+      --text-primary:     #323130;
+      --text-secondary:   #605e5c;
+      --text-muted:       #a19f9d;
+      --success:          #107c10;
+      --warning:          #d83b01;
+      --white:            #ffffff;
+      --shell-header:     #0078d4;
+      --font:             "Segoe UI", system-ui, -apple-system, sans-serif;
+      --radius:           2px;
+    }
+
+    html, body { height: 100%; font-family: var(--font); background: var(--panel-bg); color: var(--text-primary); font-size: 14px; }
+
+    /* ── Top Command Bar ─────────────────────────────────────────────────────── */
+    .command-bar {
+      height: 48px;
+      background: var(--azure-blue);
+      display: flex;
+      align-items: center;
+      padding: 0 20px;
+      gap: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,.3);
+      flex-shrink: 0;
+    }
+    .command-bar .logo {
+      display: flex; align-items: center; gap: 8px;
+      color: #fff; font-size: 15px; font-weight: 600; letter-spacing: .3px;
+    }
+    .command-bar .logo svg { opacity: .9; }
+    .command-bar .breadcrumb {
+      color: rgba(255,255,255,.75); font-size: 13px; display: flex; align-items: center; gap: 4px;
+    }
+    .command-bar .breadcrumb span { color: #fff; font-weight: 500; }
+    .status-pill {
+      margin-left: auto; display: flex; align-items: center; gap: 6px;
+      background: rgba(255,255,255,.15); border-radius: 12px;
+      padding: 3px 10px; font-size: 12px; color: #fff; font-weight: 500;
+    }
+    .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #4caf50; }
+
+    /* ── Layout ─────────────────────────────────────────────────────────────── */
+    .shell { display: flex; flex-direction: column; height: 100vh; }
+    .workspace { display: flex; flex: 1; overflow: hidden; }
+
+    /* ── Sidebar ─────────────────────────────────────────────────────────────── */
+    .sidebar {
+      width: 280px; flex-shrink: 0;
+      background: var(--sidebar-bg);
+      border-right: 1px solid var(--border);
+      display: flex; flex-direction: column;
+      overflow-y: auto;
+    }
+    .sidebar-section { padding: 16px; border-bottom: 1px solid var(--border); }
+    .sidebar-section h4 {
+      font-size: 11px; font-weight: 600; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: .8px; margin-bottom: 12px;
+    }
+    .sidebar-section p { font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
+    .form-row { margin-bottom: 10px; }
+    .form-row label {
+      display: block; font-size: 11px; font-weight: 600;
+      color: var(--text-secondary); text-transform: uppercase;
+      letter-spacing: .6px; margin-bottom: 4px;
+    }
+    .form-row input[type="text"] {
+      width: 100%; padding: 5px 8px;
+      border: 1px solid var(--border-med); border-radius: var(--radius);
+      font-size: 12px; font-family: var(--font); color: var(--text-primary);
+      background: var(--white);
+    }
+    .form-row input[type="text"]:focus { outline: none; border-color: var(--azure-blue); box-shadow: 0 0 0 1px var(--azure-blue); }
+
+    /* ── Collected Params Panel ──────────────────────────────────────────────── */
+    .params-panel { padding: 16px; flex: 1; }
+    .params-panel h4 {
+      font-size: 11px; font-weight: 600; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: .8px; margin-bottom: 12px;
+    }
+    .param-item {
+      padding: 6px 0; border-bottom: 1px solid var(--border);
+      display: grid; grid-template-columns: 1fr 1fr; gap: 4px;
+    }
+    .param-item:last-child { border-bottom: none; }
+    .param-key { font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: .4px; }
+    .param-val { font-size: 12px; color: var(--text-primary); font-family: "Cascadia Code", "Consolas", monospace; word-break: break-all; }
+    .param-val.empty { color: var(--text-muted); font-style: italic; }
+    .ready-badge {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 600;
+      margin-bottom: 12px;
+    }
+    .ready-badge.yes { background: #dff6dd; color: var(--success); }
+    .ready-badge.no  { background: #fff4ce; color: #7d5f00; }
+
+    /* ── Main Chat Area ──────────────────────────────────────────────────────── */
+    .chat-area {
+      flex: 1; display: flex; flex-direction: column;
+      background: var(--white); overflow: hidden;
+    }
+    .chat-header {
+      padding: 14px 20px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+      flex-shrink: 0;
+    }
+    .chat-header h2 { font-size: 16px; font-weight: 600; color: var(--text-primary); }
+    .chat-header p { font-size: 12px; color: var(--text-secondary); margin-top: 1px; }
+    .conv-id-badge {
+      font-size: 11px; font-family: "Cascadia Code", monospace;
+      color: var(--text-muted); background: var(--panel-bg);
+      padding: 4px 8px; border: 1px solid var(--border); border-radius: var(--radius);
+    }
+
+    /* ── Messages ────────────────────────────────────────────────────────────── */
+    .messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+    .msg-row { display: flex; gap: 10px; align-items: flex-start; }
+    .msg-row.user { flex-direction: row-reverse; }
+
+    .avatar {
+      width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 700;
+    }
+    .avatar.bot  { background: var(--azure-blue); color: #fff; }
+    .avatar.user { background: #605e5c; color: #fff; }
+
+    .bubble {
+      max-width: 72%;
+      padding: 10px 14px;
+      border-radius: var(--radius);
+      line-height: 1.6;
+      font-size: 13.5px;
+    }
+    .msg-row.bot  .bubble { background: var(--panel-bg); border: 1px solid var(--border); color: var(--text-primary); }
+    .msg-row.user .bubble { background: var(--azure-blue); color: #fff; }
+
+    /* Markdown rendered inside bot bubble */
+    .bubble h1,.bubble h2,.bubble h3 { margin: 10px 0 4px; font-size: 14px; font-weight: 600; color: var(--azure-blue); }
+    .bubble h1 { font-size: 15px; }
+    .bubble p { margin: 4px 0; }
+    .bubble ul,.bubble ol { padding-left: 20px; margin: 4px 0; }
+    .bubble li { margin: 2px 0; }
+    .bubble code {
+      background: rgba(0,120,212,.08); padding: 1px 5px; border-radius: 2px;
+      font-family: "Cascadia Code","Consolas", monospace; font-size: 12px; color: #b5390e;
+    }
+    .bubble pre {
+      background: #1e1e1e; border-radius: 3px; padding: 10px 14px;
+      overflow-x: auto; margin: 8px 0;
+    }
+    .bubble pre code { background: none; color: #d4d4d4; font-size: 12px; }
+    .bubble table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 12px; }
+    .bubble th { background: var(--azure-blue); color: #fff; padding: 5px 8px; text-align: left; }
+    .bubble td { padding: 4px 8px; border-bottom: 1px solid var(--border); }
+    .bubble blockquote { border-left: 3px solid var(--azure-blue); padding-left: 10px; color: var(--text-secondary); margin: 6px 0; }
+    .bubble strong { font-weight: 600; }
+    .bubble a { color: var(--azure-blue); }
+
+    /* Typing indicator */
+    .typing { display: flex; align-items: center; gap: 5px; padding: 10px 14px; }
+    .typing span {
+      width: 7px; height: 7px; border-radius: 50%; background: var(--border-med);
+      animation: bounce 1.2s infinite;
+    }
+    .typing span:nth-child(2) { animation-delay: .2s; }
+    .typing span:nth-child(3) { animation-delay: .4s; }
+    @keyframes bounce {
+      0%,80%,100% { transform: translateY(0); }
+      40% { transform: translateY(-6px); background: var(--azure-blue); }
+    }
+
+    /* ── Input Bar ───────────────────────────────────────────────────────────── */
+    .input-bar {
+      padding: 14px 20px; border-top: 1px solid var(--border);
+      background: var(--sidebar-bg); flex-shrink: 0;
+    }
+    .input-row { display: flex; gap: 8px; }
+    .input-row textarea {
+      flex: 1; padding: 9px 12px;
+      border: 1px solid var(--border-med); border-radius: var(--radius);
+      font-size: 13.5px; font-family: var(--font); resize: none;
+      color: var(--text-primary); height: 44px; overflow: hidden;
+      transition: border-color .15s;
+    }
+    .input-row textarea:focus { outline: none; border-color: var(--azure-blue); box-shadow: 0 0 0 1px var(--azure-blue); }
+    .send-btn {
+      padding: 0 18px; background: var(--azure-blue); color: #fff;
+      border: none; border-radius: var(--radius); cursor: pointer;
+      font-size: 13px; font-weight: 600; font-family: var(--font);
+      transition: background .15s; display: flex; align-items: center; gap: 6px;
+    }
+    .send-btn:hover:not(:disabled) { background: var(--azure-blue-hover); }
+    .send-btn:disabled { background: var(--border-med); cursor: not-allowed; }
+    .new-btn {
+      padding: 0 12px; background: transparent; color: var(--azure-blue);
+      border: 1px solid var(--azure-blue); border-radius: var(--radius);
+      cursor: pointer; font-size: 12px; font-weight: 600; font-family: var(--font);
+      transition: background .15s;
+    }
+    .new-btn:hover { background: var(--azure-blue-light); }
+    .footer-hint { margin-top: 8px; font-size: 11px; color: var(--text-muted); text-align: center; }
+
+    /* ── Scrollbar ───────────────────────────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border-med); border-radius: 3px; }
+  </style>
+</head>
+<body>
+<div class="shell">
+
+  <!-- ── Command Bar ── -->
+  <div class="command-bar">
+    <div class="logo">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+        <rect x="2" y="2" width="7" height="7" fill="white" opacity=".9"/>
+        <rect x="11" y="2" width="7" height="7" fill="white" opacity=".7"/>
+        <rect x="2" y="11" width="7" height="7" fill="white" opacity=".7"/>
+        <rect x="11" y="11" width="7" height="7" fill="white" opacity=".5"/>
+      </svg>
+      HOA Budget AI
+    </div>
+    <div class="breadcrumb">/ <span>Slot-Filling Chat</span></div>
+    <div class="status-pill" id="apiStatus">
+      <span class="status-dot" id="statusDot"></span>
+      <span id="statusLabel">Connecting…</span>
+    </div>
+  </div>
+
+  <div class="workspace">
+
+    <!-- ── Sidebar ── -->
+    <aside class="sidebar">
+      <div class="sidebar-section">
+        <h4>Connection</h4>
+        <div class="form-row">
+          <label>API Base URL</label>
+          <input type="text" id="apiUrl" value="http://localhost:8000" />
+        </div>
+        <p>Chat endpoint: <code style="font-size:11px">/chat</code></p>
+      </div>
+
+      <div class="sidebar-section">
+        <h4>About</h4>
+        <p>
+          Multi-turn slot-filling agent. Collects <strong>property_id</strong>,
+          <strong>gl_keys</strong>, <strong>date_range</strong>,
+          <strong>forecast_year</strong>, and optional directives before
+          running budget analysis.
+        </p>
+      </div>
+
+      <div class="params-panel">
+        <h4>Collected Parameters</h4>
+        <div id="readyBadge" class="ready-badge no">
+          <svg width="12" height="12" fill="currentColor" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M8 4v4l2.5 2.5"/></svg>
+          Awaiting Slots
+        </div>
+        <div id="paramsList">
+          <div class="param-item"><span class="param-key">property_id</span><span class="param-val empty">—</span></div>
+          <div class="param-item"><span class="param-key">gl_keys</span><span class="param-val empty">—</span></div>
+          <div class="param-item"><span class="param-key">date_range</span><span class="param-val empty">—</span></div>
+          <div class="param-item"><span class="param-key">forecast_year</span><span class="param-val empty">—</span></div>
+          <div class="param-item"><span class="param-key">directives</span><span class="param-val empty">—</span></div>
+          <div class="param-item"><span class="param-key">anomaly detect</span><span class="param-val empty">—</span></div>
+          <div class="param-item"><span class="param-key">research anom.</span><span class="param-val empty">—</span></div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ── Main Chat ── -->
+    <div class="chat-area">
+      <div class="chat-header">
+        <div>
+          <h2>Budget Slot-Filling Agent</h2>
+          <p>Provide property details, date range, and forecast year to begin analysis</p>
+        </div>
+        <div class="conv-id-badge" id="convIdDisplay">No active conversation</div>
+      </div>
+
+      <div class="messages" id="messages">
+        <div class="msg-row bot">
+          <div class="avatar bot">AI</div>
+          <div class="bubble">
+            <p>Hello! I'm the HOA Budget AI assistant. Tell me about the property you'd like to budget — include the <strong>property ID</strong>, <strong>year</strong>, <strong>accounts</strong>, and <strong>date range</strong>, and I'll collect any missing details.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="input-bar">
+        <div class="input-row">
+          <button class="new-btn" id="newConvBtn" title="Start new conversation">+ New</button>
+          <textarea id="msgInput" placeholder="e.g. Budget property 65 for 2026, all accounts…" rows="1"></textarea>
+          <button class="send-btn" id="sendBtn">
+            <svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path d="M15.964.686a.5.5 0 0 0-.65-.65L.767 5.855a.75.75 0 0 0-.124 1.329l4.995 3.178 1.6 4.823a.75.75 0 0 0 1.33.12l8.4-13.4a.5.5 0 0 0-.004-.619z"/></svg>
+            Send
+          </button>
+        </div>
+        <div class="footer-hint">HOA Budget Slot-Filling API &nbsp;·&nbsp; Multi-turn conversation</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  /* ── State ─────────────────────────────────────────────────────────────── */
+  let conversationId = null;
+  let busy = false;
+
+  const apiUrlInput  = document.getElementById('apiUrl');
+  const messagesEl   = document.getElementById('messages');
+  const msgInput     = document.getElementById('msgInput');
+  const sendBtn      = document.getElementById('sendBtn');
+  const newConvBtn   = document.getElementById('newConvBtn');
+  const convDisplay  = document.getElementById('convIdDisplay');
+  const readyBadge   = document.getElementById('readyBadge');
+  const paramsList   = document.getElementById('paramsList');
+  const statusDot    = document.getElementById('statusDot');
+  const statusLabel  = document.getElementById('statusLabel');
+
+  /* ── Helpers ────────────────────────────────────────────────────────────── */
+  function getBase() { return apiUrlInput.value.replace(/\/$/, ''); }
+
+  function appendMessage(role, htmlContent) {
+    const row = document.createElement('div');
+    row.className = `msg-row ${role}`;
+    row.innerHTML = `
+      <div class="avatar ${role}">${role === 'user' ? 'You' : 'AI'}</div>
+      <div class="bubble">${htmlContent}</div>`;
+    messagesEl.appendChild(row);
+    row.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    return row;
+  }
+
+  function renderMd(text) {
+    // marked converts markdown → HTML; sanitize is off (internal use only)
+    return marked.parse(text ?? '');
+  }
+
+  function showTyping() {
+    const row = document.createElement('div');
+    row.className = 'msg-row bot';
+    row.id = 'typing';
+    row.innerHTML = `
+      <div class="avatar bot">AI</div>
+      <div class="bubble typing"><span></span><span></span><span></span></div>`;
+    messagesEl.appendChild(row);
+    row.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }
+
+  function hideTyping() {
+    document.getElementById('typing')?.remove();
+  }
+
+  function setInputEnabled(enabled) {
+    busy = !enabled;
+    msgInput.disabled = !enabled;
+    sendBtn.disabled  = !enabled;
+  }
+
+  function updateParams(collected, ready) {
+    // Badge
+    if (ready) {
+      readyBadge.className = 'ready-badge yes';
+      readyBadge.innerHTML = `
+        <svg width="12" height="12" fill="currentColor" viewBox="0 0 16 16"><path d="M12.736 3.97a.733.733 0 0 1 1.047 0c.286.289.29.756.01 1.05L7.88 12.01a.733.733 0 0 1-1.065.02L3.217 8.384a.757.757 0 0 1 0-1.06.733.733 0 0 1 1.047 0l3.052 3.093 5.4-6.425z"/></svg>
+        Ready for Execution`;
+    } else {
+      readyBadge.className = 'ready-badge no';
+      readyBadge.innerHTML = `
+        <svg width="12" height="12" fill="currentColor" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M8 4v4l2.5 2.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>
+        Awaiting Slots`;
+    }
+
+    // Param rows
+    const keys = [
+      ['property_id',           'property_id'],
+      ['gl_keys',               'gl_keys'],
+      ['date_range',            'date_range'],
+      ['forecast_year',         'forecast_year'],
+      ['directives',            'directives'],
+      ['run_anomaly_detection', 'anomaly detect'],
+      ['research_anomalies',    'research anom.'],
+    ];
+
+    paramsList.innerHTML = keys.map(([key, label]) => {
+      const raw = collected?.[key];
+      let val = '—';
+      let empty = true;
+
+      if (raw !== null && raw !== undefined) {
+        if (Array.isArray(raw)) {
+          val   = raw.length ? raw.join(', ') : '[]';
+          empty = raw.length === 0;
+        } else if (typeof raw === 'boolean') {
+          val   = raw ? 'Yes' : 'No';
+          empty = false;
+        } else {
+          val   = String(raw);
+          empty = val === '' || val === 'null';
+        }
+      }
+
+      return `<div class="param-item">
+        <span class="param-key">${label}</span>
+        <span class="param-val ${empty ? 'empty' : ''}">${empty ? '—' : val}</span>
+      </div>`;
+    }).join('');
+  }
+
+  /* ── Health check ───────────────────────────────────────────────────────── */
+  async function checkHealth() {
+    try {
+      const r = await fetch(`${getBase()}/health`);
+      if (r.ok) {
+        statusDot.style.background = '#4caf50';
+        statusLabel.textContent = 'API Online';
+      } else { throw new Error(); }
+    } catch {
+      statusDot.style.background = '#d83b01';
+      statusLabel.textContent = 'API Offline';
+    }
+  }
+
+  checkHealth();
+  apiUrlInput.addEventListener('change', checkHealth);
+
+  /* ── Send message ───────────────────────────────────────────────────────── */
+  async function send() {
+    const text = msgInput.value.trim();
+    if (!text || busy) return;
+
+    setInputEnabled(false);
+    appendMessage('user', text.replace(/</g, '&lt;').replace(/>/g, '&gt;'));
+    msgInput.value = '';
+    msgInput.style.height = '44px';
+    showTyping();
+
+    try {
+      const body = { message: text };
+      if (conversationId) body.conversation_id = conversationId;
+
+      const res = await fetch(`${getBase()}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`HTTP ${res.status}: ${errText}`);
+      }
+
+      const data = await res.json();
+
+      // Update conversation tracking
+      conversationId = data.conversation_id;
+      convDisplay.textContent = `conv: ${conversationId.slice(0, 8)}…`;
+
+      // Update sidebar
+      updateParams(data.collected, data.ready_for_execution);
+
+      hideTyping();
+      appendMessage('bot', renderMd(data.response));
+
+      // If execution is ready, show a visual cue
+      if (data.ready_for_execution) {
+        appendMessage('bot', `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
+          <svg width="16" height="16" fill="#107c10" viewBox="0 0 16 16"><path d="M12.736 3.97a.733.733 0 0 1 1.047 0c.286.289.29.756.01 1.05L7.88 12.01a.733.733 0 0 1-1.065.02L3.217 8.384a.757.757 0 0 1 0-1.06.733.733 0 0 1 1.047 0l3.052 3.093 5.4-6.425z"/></svg>
+          <span style="color:#107c10;font-weight:600;font-size:13px;">All slots collected — budget analysis is ready to execute.</span>
+        </div>`);
+      }
+
+    } catch (err) {
+      hideTyping();
+      appendMessage('bot', `<span style="color:#d83b01;font-weight:600;">Error:</span> ${err.message}`);
+    } finally {
+      setInputEnabled(true);
+      msgInput.focus();
+    }
+  }
+
+  /* ── New conversation ───────────────────────────────────────────────────── */
+  newConvBtn.addEventListener('click', () => {
+    conversationId = null;
+    convDisplay.textContent = 'No active conversation';
+    messagesEl.innerHTML = `
+      <div class="msg-row bot">
+        <div class="avatar bot">AI</div>
+        <div class="bubble"><p>New conversation started. Tell me the property, forecast year, accounts, and date range.</p></div>
+      </div>`;
+    updateParams(null, false);
+    msgInput.focus();
+  });
+
+  /* ── Send button / Enter key ────────────────────────────────────────────── */
+  sendBtn.addEventListener('click', send);
+
+  msgInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+  });
+
+  // Auto-grow textarea
+  msgInput.addEventListener('input', () => {
+    msgInput.style.height = '44px';
+    msgInput.style.height = Math.min(msgInput.scrollHeight, 120) + 'px';
+  });
+</script>
+</body>
+</html>

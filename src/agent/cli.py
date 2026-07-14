@@ -16,6 +16,7 @@ import os
 import re
 import sys
 
+import redis.asyncio as aioredis
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import InMemoryHistory
 from pydantic_ai import (
@@ -153,8 +154,12 @@ async def _run() -> int:
             memory = None
             memory_note = f"  [yellow](memory disabled: {exc})[/yellow]"
 
+    redis_client: aioredis.Redis | None = None
+    if settings.redis_enabled:
+        redis_client = aioredis.from_url(settings.redis_url, decode_responses=True)
+
     try:
-        agent = build_agent(settings, agent_toolset, memory=memory)
+        agent = build_agent(settings, agent_toolset, memory=memory, redis_client=redis_client)
     except (UserError, ModelConfigError) as exc:
         console.print(
             Panel(
@@ -195,163 +200,170 @@ async def _run() -> int:
     session: PromptSession[str] = PromptSession(history=InMemoryHistory())
     history: list[ModelMessage] = []
 
-    async with agent:
-        while True:
-            try:
-                user_input = (await session.prompt_async("you › ")).strip()
-            except (EOFError, KeyboardInterrupt):
-                console.print("\n[dim]bye[/dim]")
-                return 0
+    if redis_client:
+        console.print("[dim]Redis write-back enabled (4 tools active).[/dim]\n")
 
-            if not user_input:
-                continue
+    try:
+        async with agent:
+            while True:
+                try:
+                    user_input = (await session.prompt_async("you › ")).strip()
+                except (EOFError, KeyboardInterrupt):
+                    console.print("\n[dim]bye[/dim]")
+                    return 0
 
-            lowered = user_input.lower()
+                if not user_input:
+                    continue
 
-            if lowered in ("/exit", "/quit"):
-                console.print("[dim]bye[/dim]")
-                return 0
+                lowered = user_input.lower()
 
-            if lowered == "/help":
-                console.print(HELP)
-                continue
+                if lowered in ("/exit", "/quit"):
+                    console.print("[dim]bye[/dim]")
+                    return 0
 
-            if lowered == "/clear":
-                history = []
-                console.print("[dim]conversation history cleared[/dim]\n")
-                continue
+                if lowered == "/help":
+                    console.print(HELP)
+                    continue
 
-            if lowered.startswith("/machine"):
-                parts = user_input.split(None, 1)
-                if len(parts) < 2 or not parts[1].strip():
-                    console.print(
-                        "[yellow]Usage: /machine <id>  (e.g. /machine M104)[/yellow]\n"
+                if lowered == "/clear":
+                    history = []
+                    console.print("[dim]conversation history cleared[/dim]\n")
+                    continue
+
+                if lowered.startswith("/machine"):
+                    parts = user_input.split(None, 1)
+                    if len(parts) < 2 or not parts[1].strip():
+                        console.print(
+                            "[yellow]Usage: /machine <id>  (e.g. /machine M104)[/yellow]\n"
+                        )
+                    else:
+                        active_machine = parts[1].strip().upper()
+                        console.print(
+                            f"[dim]active machine set to[/dim] [cyan]{active_machine}[/cyan]\n"
+                        )
+                    continue
+
+                if lowered == "/whoami":
+                    machine_str = (
+                        f"  [dim]machine[/dim] [cyan]{active_machine}[/cyan]"
+                        if active_machine
+                        else ""
                     )
-                else:
-                    active_machine = parts[1].strip().upper()
                     console.print(
-                        f"[dim]active machine set to[/dim] [cyan]{active_machine}[/cyan]\n"
+                        f"[dim]user[/dim] [cyan]{identity.owner_id}[/cyan]  "
+                        f"[dim]session[/dim] [cyan]{identity.session_id}[/cyan]"
+                        f"  [dim]memory[/dim] "
+                        f"{'[green]on[/green]' if memory else '[yellow]off[/yellow]'}"
+                        f"{machine_str}\n"
                     )
-                continue
+                    continue
 
-            if lowered == "/whoami":
-                machine_str = (
-                    f"  [dim]machine[/dim] [cyan]{active_machine}[/cyan]"
-                    if active_machine
-                    else ""
-                )
-                console.print(
-                    f"[dim]user[/dim] [cyan]{identity.owner_id}[/cyan]  "
-                    f"[dim]session[/dim] [cyan]{identity.session_id}[/cyan]"
-                    f"  [dim]memory[/dim] "
-                    f"{'[green]on[/green]' if memory else '[yellow]off[/yellow]'}"
-                    f"{machine_str}\n"
-                )
-                continue
+                if lowered.startswith("/user"):
+                    parts = user_input.split(None, 1)
+                    if len(parts) < 2 or not parts[1].strip():
+                        console.print(
+                            "[yellow]Usage: /user <id>  (e.g. /user operator-2)[/yellow]\n"
+                        )
+                    else:
+                        new_owner = parts[1].strip()
+                        identity.owner_id = new_owner
+                        history = []
+                        active_machine = None
+                        console.print(
+                            f"[dim]user switched to[/dim] [cyan]{new_owner}[/cyan]"
+                            f"[dim] — history cleared, long-term memory now scoped to "
+                            f"this user. Try asking what it remembers.[/dim]\n"
+                        )
+                    continue
 
-            if lowered.startswith("/user"):
-                parts = user_input.split(None, 1)
-                if len(parts) < 2 or not parts[1].strip():
-                    console.print(
-                        "[yellow]Usage: /user <id>  (e.g. /user operator-2)[/yellow]\n"
-                    )
-                else:
-                    new_owner = parts[1].strip()
-                    identity.owner_id = new_owner
+                if lowered in ("/newshift", "/newsession"):
                     history = []
                     active_machine = None
-                    console.print(
-                        f"[dim]user switched to[/dim] [cyan]{new_owner}[/cyan]"
-                        f"[dim] — history cleared, long-term memory now scoped to "
-                        f"this user. Try asking what it remembers.[/dim]\n"
+                    nxt = (
+                        re.sub(
+                            r"(\d+)$",
+                            lambda m: str(int(m.group()) + 1),
+                            identity.session_id,
+                        )
+                        if re.search(r"\d+$", identity.session_id)
+                        else f"{identity.session_id}-2"
                     )
-                continue
+                    identity.session_id = nxt
+                    if memory:
+                        console.print(
+                            f"[dim]new shift started — session[/dim] [cyan]{nxt}[/cyan]"
+                            f"[dim] — working memory cleared, long-term memory "
+                            f"persists. Ask it what it remembers.[/dim]\n"
+                        )
+                    else:
+                        console.print(
+                            f"[dim]new shift — session[/dim] [cyan]{nxt}[/cyan] "
+                            f"[yellow](memory off — nothing persists)[/yellow]\n"
+                        )
+                    continue
 
-            if lowered in ("/newshift", "/newsession"):
-                history = []
-                active_machine = None
-                nxt = (
-                    re.sub(
-                        r"(\d+)$",
-                        lambda m: str(int(m.group()) + 1),
-                        identity.session_id,
+                if lowered == "/tools":
+                    await _list_tools(toolset)
+                    continue
+
+                if len(user_input) > _MAX_INPUT:
+                    console.print(
+                        f"[yellow]Input truncated to {_MAX_INPUT} characters "
+                        f"(was {len(user_input)}).[/yellow]"
                     )
-                    if re.search(r"\d+$", identity.session_id)
-                    else f"{identity.session_id}-2"
+                    user_input = user_input[:_MAX_INPUT]
+
+                prompt = (
+                    f"[Active machine: {active_machine}]\n{user_input}"
+                    if active_machine
+                    else user_input
                 )
-                identity.session_id = nxt
+
                 if memory:
-                    console.print(
-                        f"[dim]new shift started — session[/dim] [cyan]{nxt}[/cyan]"
-                        f"[dim] — working memory cleared, long-term memory "
-                        f"persists. Ask it what it remembers.[/dim]\n"
-                    )
-                else:
-                    console.print(
-                        f"[dim]new shift — session[/dim] [cyan]{nxt}[/cyan] "
-                        f"[yellow](memory off — nothing persists)[/yellow]\n"
-                    )
-                continue
+                    await memory.log_turn("user", user_input)
 
-            if lowered == "/tools":
-                await _list_tools(toolset)
-                continue
-
-            if len(user_input) > _MAX_INPUT:
-                console.print(
-                    f"[yellow]Input truncated to {_MAX_INPUT} characters "
-                    f"(was {len(user_input)}).[/yellow]"
-                )
-                user_input = user_input[:_MAX_INPUT]
-
-            prompt = (
-                f"[Active machine: {active_machine}]\n{user_input}"
-                if active_machine
-                else user_input
-            )
-
-            if memory:
-                await memory.log_turn("user", user_input)
-
-            try:
-                first_text = True
-                async with agent.run_stream_events(prompt, message_history=history) as events:
-                    async for event in events:
-                        if isinstance(event, FunctionToolCallEvent):
-                            args = (
-                                event.part.args_as_dict()
-                                if hasattr(event.part, "args_as_dict")
-                                else event.part.args
-                            )
-                            console.print(
-                                Text.assemble(
-                                    ("  ↳ ", "dim"),
-                                    (event.part.tool_name, "green"),
-                                    (f"  {args}", "dim"),
+                try:
+                    first_text = True
+                    async with agent.run_stream_events(prompt, message_history=history) as events:
+                        async for event in events:
+                            if isinstance(event, FunctionToolCallEvent):
+                                args = (
+                                    event.part.args_as_dict()
+                                    if hasattr(event.part, "args_as_dict")
+                                    else event.part.args
                                 )
-                            )
-                        elif isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
-                            if first_text:
+                                console.print(
+                                    Text.assemble(
+                                        ("  ↳ ", "dim"),
+                                        (event.part.tool_name, "green"),
+                                        (f"  {args}", "dim"),
+                                    )
+                                )
+                            elif isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+                                if first_text:
+                                    console.print()
+                                    console.print(Text("iris ›", style="bold red"))
+                                    first_text = False
+                                if event.part.content:
+                                    print(event.part.content, end="", flush=True)
+                            elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+                                if event.delta.content_delta:
+                                    print(event.delta.content_delta, end="", flush=True)
+                            elif isinstance(event, AgentRunResultEvent):
+                                if first_text:
+                                    console.print()
+                                    console.print(Text("iris ›", style="bold red"))
+                                print()
                                 console.print()
-                                console.print(Text("iris ›", style="bold red"))
-                                first_text = False
-                            if event.part.content:
-                                print(event.part.content, end="", flush=True)
-                        elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
-                            if event.delta.content_delta:
-                                print(event.delta.content_delta, end="", flush=True)
-                        elif isinstance(event, AgentRunResultEvent):
-                            if first_text:
-                                console.print()
-                                console.print(Text("iris ›", style="bold red"))
-                            print()
-                            console.print()
-                            if memory:
-                                await memory.log_turn("assistant", event.result.output)
-                            history = event.result.all_messages()
-            except Exception as exc:  # noqa: BLE001
-                console.print(f"[red]Error:[/red] {exc}\n")
-                continue
+                                if memory:
+                                    await memory.log_turn("assistant", event.result.output)
+                                history = event.result.all_messages()
+                except Exception as exc:  # noqa: BLE001
+                    console.print(f"[red]Error:[/red] {exc}\n")
+                    continue
+    finally:
+        if redis_client:
+            await redis_client.aclose()
 
 
 def main() -> None:

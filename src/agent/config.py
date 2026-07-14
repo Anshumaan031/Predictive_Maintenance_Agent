@@ -39,10 +39,16 @@ class Settings:
     memory_store_id: str | None = None
     memory_key: str | None = None
 
+    redis_url: str | None = None
+
     @property
     def memory_enabled(self) -> bool:
         """True only when all three Agent Memory values are present."""
         return bool(self.memory_endpoint and self.memory_store_id and self.memory_key)
+
+    @property
+    def redis_enabled(self) -> bool:
+        return bool(self.redis_url)
 
 
 def load_settings() -> Settings:
@@ -68,4 +74,5 @@ def load_settings() -> Settings:
         memory_endpoint=os.getenv("AGENT_MEMORY_ENDPOINT", "").strip() or None,
         memory_store_id=os.getenv("AGENT_MEMORY_STORE_ID", "").strip() or None,
         memory_key=os.getenv("AGENT_MEMORY_KEY", "").strip() or None,
+        redis_url=os.getenv("REDIS_URL", "").strip() or None,
     )
