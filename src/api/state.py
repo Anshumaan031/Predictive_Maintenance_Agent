@@ -21,10 +21,6 @@ from ..utils.tool_names import safe_name_map
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_OWNER_ID = "machine-floor"
-DEFAULT_SESSION_ID = "session-1"
-
-
 @dataclass
 class AppState:
     settings: Settings
@@ -54,7 +50,7 @@ async def create_state() -> tuple[AppState, list[str]]:
     name_map = safe_name_map(tool_names) if tool_names else {}
     agent_toolset = toolset.renamed(name_map) if name_map else toolset
 
-    identity = Identity(owner_id=DEFAULT_OWNER_ID, session_id=DEFAULT_SESSION_ID)
+    identity = Identity(owner_id=settings.owner_id, session_id=settings.session_id)
     memory: MemoryService | None = None
     if settings.memory_enabled:
         try:

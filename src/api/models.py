@@ -13,6 +13,10 @@ class SetMachineRequest(BaseModel):
     machine_id: str
 
 
+class SetUserRequest(BaseModel):
+    owner_id: str
+
+
 class SessionInfo(BaseModel):
     owner_id: str
     session_id: str

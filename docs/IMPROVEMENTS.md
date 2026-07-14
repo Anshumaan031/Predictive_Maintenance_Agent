@@ -1,57 +1,7 @@
-# Redis Iris Agent — Code Review & Improvement Suggestions
+# Redis Iris Agent — Improvement Suggestions
 
-> Generated 2026-07-14. Companion to `POC_ROADMAP.md`. Covers bugs found in the
-> current source and feature suggestions beyond what the roadmap already defines.
-
----
-
-## Code Issues to Fix First
-
-These are bugs or gaps in the existing code. Address before building new features.
-
-### 1. `_to_text` bug — `memory.py:143–151`
-
-The `break` inside the `for` loop exits after any exception from
-`model_dump_json`, meaning the `.json()` fallback is never reached. The intent
-was to fall through to `str(obj)` on failure, but `break` makes it jump out of
-the loop immediately after the first exception.
-
-**Fix:** replace `break` with `continue` so the next attribute is tried, or
-rewrite as explicit sequential `try/except` blocks.
-
----
-
-### 2. `/newshift` session-ID increment is fragile — `cli.py:241–244`
-
-The logic `n[0]-{int(n[1]) + 1}` only works when the session ID is exactly
-`prefix-<integer>`. A second `/newshift` on a fallback session ID produces
-`session-1-2-2` instead of `session-1-3`, breaking the demo.
-
-**Fix:** use a regex to find the trailing integer regardless of prefix depth,
-e.g. `re.sub(r'(\d+)$', lambda m: str(int(m.group()) + 1), session_id)`.
-
----
-
-### 3. `model_provider.py` doesn't call `load_dotenv()`
-
-`build_model()` reads env vars with `os.getenv()` directly. `load_dotenv()` is
-only called inside `config.load_settings()`. The ordering in `_run()` happens to
-be correct today, but if `build_model()` is ever called standalone (e.g. a test
-fixture), it silently reads stale env and produces a confusing `ModelConfigError`.
-
-**Fix:** either call `load_dotenv()` at the top of `build_model()`, or document
-the dependency explicitly in its docstring.
-
----
-
-### 4. No input length guard
-
-User input is passed to the model with no truncation or length check. Pasting a
-large log file will silently blow the context window and produce a confusing
-provider error rather than a helpful message.
-
-**Fix:** add a guard in the chat loop (e.g. warn and truncate at 8 000 chars)
-before calling `agent.run`.
+> Generated 2026-07-14. Companion to `POC_ROADMAP.md`. Covers feature suggestions
+> beyond what the roadmap already defines.
 
 ---
 
@@ -61,21 +11,6 @@ The roadmap's tiering is sound. Below is a sharper read on sequencing.
 
 ### Do first (unlocks the full demo arc)
 
-#### Pre-seed long-term memories *(Demo Data section of roadmap)*
-
-This is effectively Phase 0. Without pre-seeded memories, every cold demo
-requires a "session 1" warmup before recall works. Seed C1004 / C1007 / C1010 /
-C1012 preferences now so the first demo message already shows memory retrieval.
-
-| Customer | Pre-seed |
-|---|---|
-| C1004 Jordan Rivera | "Prefers reship over refund when orders are delayed" |
-| C1007 Casey Okafor | "Budget-conscious — prefers store credit over cash refund" |
-| C1010 Morgan Larsen | "Prefers email follow-up, not phone calls" |
-| C1012 Avery Sato | "VIP — always escalate if issue unresolved in 24 h" |
-
----
-
 #### `/user <id>` switching — *Roadmap feature #3*
 
 **One-line unlock of the multi-tenancy demo.** Memory scoping by `owner_id`
@@ -83,7 +18,7 @@ already exists in `memory.py:122`; adding `/user <customer_id>` to the slash
 command dispatcher in `cli.py` just updates `identity.owner_id` and clears
 `history`.
 
-This proves memory isolation live — two customers, two preference sets — which
+This proves memory isolation live — two users, two memory sets — which
 is the hardest thing to fake with a static demo and the easiest thing to
 implement here.
 
@@ -92,13 +27,13 @@ implement here.
 #### Action write-back tools — *Roadmap feature #1*
 
 The single highest-leverage item. The agent currently only reads; that is a
-chatbot, not an agent. Four tools, each ~30 lines, using the `redis.Redis`
-client pattern already in `seed_northpeak.py`:
+chatbot, not an agent. Tools using the `redis.Redis` client pattern already in
+`seed.py`:
 
-- `create_ticket` — open a support ticket linked to customer + order
-- `issue_store_credit` — write credit to a customer account
-- `reship_order` — create a reshipment record
-- `update_ticket_status` — advance a ticket through its lifecycle
+- `update_work_order_status` — advance a work order through its lifecycle
+- `assign_technician` — assign or reassign a technician to a work order
+- `create_work_order` — open a new repair/inspection order for a machine
+- `flag_machine_status` — update a machine's status (e.g. fault → maintenance)
 
 Register each as `@agent.tool_plain` closures in `agent.py`, same pattern as
 `search_memory` / `store_memory` at `agent.py:125`. Return a confirmation string
@@ -116,10 +51,10 @@ visual impact. Showing `tools: 8ms · LLM: 1.9s` under each response makes the
 latency in a single line.
 
 ```
-  ↳ get_customer_by_id  {"id": "C1004"}
-  ↳ filter_order_by_customer_id  {"value": "C1004"}
+  ↳ get_machine_by_id  {"id": "M104"}
+  ↳ filter_alert_by_machine_id  {"value": "M104"}
 
-  iris ›  Your Summit 2-Person Tent (O5099) is 4 days delayed…
+  iris ›  Alpha Mill has a critical vibration alert (A301)…
 
   [dim]  1.9 s  ·  LLM 1.8 s  ·  tools 38 ms  ·  3 262 tokens[/dim]
 ```
@@ -128,30 +63,32 @@ latency in a single line.
 
 #### Streaming responses — *Roadmap feature #7*
 
-Swap `agent.run` for `agent.run_stream`. The spinner-then-dump UX reads as
-scripted; streaming makes the agent feel live. Pydantic AI's streaming API is
-close to a drop-in replacement in the chat loop.
+Swap `agent.run` for `agent.run_stream` in the CLI. The spinner-then-dump UX
+reads as scripted; streaming makes the agent feel live. Pydantic AI's streaming
+API is close to a drop-in replacement in the chat loop. (The API already streams
+via SSE — this is CLI only.)
 
 ---
 
 #### `OWNER_ID` / `SESSION_ID` env vars
 
 Currently there is no way to configure the demo identity without editing source
-(`DEFAULT_OWNER_ID = "machine-floor"` is hardcoded in `cli.py:35`). Add these
-as optional env vars read in `load_settings()` with the hardcoded values as
-fallbacks. Trivial change, significant usability win for anyone running the demo.
+(`DEFAULT_OWNER_ID = "machine-floor"` is hardcoded in `cli.py:41` and
+`api/state.py`). Add these as optional env vars read in `load_settings()` with
+the hardcoded values as fallbacks. Trivial change, significant usability win for
+anyone running the demo against a different dataset.
 
 ---
 
 #### `escalate_to_human` tool — *Roadmap feature #2, simplified*
 
 The roadmap frames escalation as a combined "score + route" pipeline with a
-keyword scorer. A leaner cut: add one `escalate_to_human(ticket_id, reason,
+keyword scorer. A leaner cut: add one `escalate_to_human(machine_id, reason,
 priority)` write-back tool that creates an `escalation:{id}` record, and let the
-system prompt describe *when* the model should call it (VIP tier, frustrated
-tone, unresolved after N turns). The model's judgment replaces the keyword
-scorer — which is actually more honest to the "agent decides" pitch and requires
-far less code.
+system prompt describe *when* the model should call it (critical severity,
+unresolved after N turns, no available technician). The model's judgment replaces
+the keyword scorer — which is actually more honest to the "agent decides" pitch
+and requires far less code.
 
 ---
 
@@ -165,16 +102,16 @@ Append each turn to JSONL in the chat loop:
 
 ```json
 {
-  "ts": "2026-07-10T14:23:01Z",
-  "session_id": "support-2",
-  "owner_id": "C1004",
-  "user_msg": "why is my order late?",
+  "ts": "2026-07-14T14:23:01Z",
+  "session_id": "session-1",
+  "owner_id": "machine-floor",
+  "user_msg": "what's wrong with M104?",
   "tool_calls": [
-    {"name": "search_memory",               "args": {"query": "Jordan Rivera preferences"}},
-    {"name": "get_customer_by_id",          "args": {"id": "C1004"}},
-    {"name": "filter_order_by_customer_id", "args": {"value": "C1004"}}
+    {"name": "get_machine_by_id",          "args": {"id": "M104"}},
+    {"name": "filter_alert_by_machine_id", "args": {"value": "M104"}},
+    {"name": "search_memory",              "args": {"query": "M104 fault history"}}
   ],
-  "assistant_msg": "Your Summit 2-Person Tent (O5099) is 4 days delayed…",
+  "assistant_msg": "Alpha Mill has a critical vibration alert (A301)…",
   "latency_ms": {"llm": 1840, "tools": 38},
   "tokens":     {"prompt": 3120, "completion": 142}
 }
@@ -188,8 +125,8 @@ Add `/export` to dump the current session to a shareable file.
 
 Two tests alone prove the core correctness claim:
 
-- `test_tool_routing.py` — "where's my order" → asserts `filter_order_by_customer_id` fired
-- `test_memory_recall.py` — cross-session preference recall → asserts `search_memory` fired and key fact appears in response
+- `test_tool_routing.py` — "what's wrong with M104" → asserts `filter_alert_by_machine_id` fired
+- `test_memory_recall.py` — cross-session bearing knowledge recall → asserts `search_memory` fired and key fact appears in response
 
 Pydantic AI's `TestModel` + captured transcripts make these cheap; no real LLM
 or live Redis needed in CI.
@@ -200,18 +137,15 @@ or live Redis needed in CI.
 
 | # | Item | Effort | Why now |
 |---|---|---|---|
-| 1 | Fix `_to_text` bug | Tiny | Silent memory recall failures |
-| 2 | Fix `/newshift` increment | Tiny | Demo breaks on second shift |
-| 3 | Pre-seed long-term memories | Small | Required for cold demo |
-| 4 | `/user <id>` switching | Small | One-line multi-tenancy proof |
-| 5 | Action write-back tools (×4) | Medium | Turns chatbot into agent |
-| 6 | Latency display | Small | Makes Redis speed pitch concrete |
-| 7 | Streaming responses | Small | Makes demo feel real |
-| 8 | `OWNER_ID`/`SESSION_ID` env vars | Tiny | Removes hardcoded demo identity |
-| 9 | `escalate_to_human` tool | Small | Human-in-the-loop story |
-| 10 | `/export` + audit log | Medium | Governance / traceability story |
-| 11 | Eval harness (`tests/`) | Medium | Engineering rigor signal |
-| 12 | FastAPI web UI | Large | Visual wow for non-dev recruiters |
-| 13 | One-command setup + Makefile | Small | Friction-free evaluation |
-| 14 | GitHub Actions CI | Small | Free credibility (green badge) |
-| 15 | README + demo GIF | Medium | Recruiter-facing polish |
+| 1 | `/user <id>` switching | Small | One-line multi-identity proof |
+| 2 | Action write-back tools (×4) | Medium | Turns chatbot into agent |
+| 3 | Latency display | Small | Makes Redis speed pitch concrete |
+| 4 | Streaming responses (CLI) | Small | Makes demo feel real |
+| 5 | `OWNER_ID`/`SESSION_ID` env vars | Tiny | Removes hardcoded demo identity |
+| 6 | `escalate_to_human` tool | Small | Human-in-the-loop story |
+| 7 | `/export` + audit log | Medium | Governance / traceability story |
+| 8 | Eval harness (`tests/`) | Medium | Engineering rigor signal |
+| 9 | FastAPI web UI | Large | Visual wow for non-dev audience |
+| 10 | One-command setup + Makefile | Small | Friction-free evaluation |
+| 11 | GitHub Actions CI | Small | Free credibility (green badge) |
+| 12 | README + demo GIF | Medium | Audience-facing polish |

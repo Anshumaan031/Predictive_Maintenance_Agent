@@ -22,11 +22,18 @@ from typing import AsyncGenerator
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic_ai.messages import ToolCallPart
+from pydantic_ai import (
+    AgentRunResultEvent,
+    FunctionToolCallEvent,
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPartDelta,
+)
+from pydantic_ai.messages import TextPart, ToolCallPart
 
 from ..agent.config import ConfigError
 from ..agent.model_provider import ModelConfigError
-from .models import ChatRequest, SessionInfo, SetMachineRequest
+from .models import ChatRequest, SessionInfo, SetMachineRequest, SetUserRequest
 from .state import AppState, create_state
 
 logger = logging.getLogger(__name__)
@@ -103,26 +110,30 @@ async def _chat_sse(state: AppState, message: str) -> AsyncGenerator[str, None]:
         await state.memory.log_turn("user", message)
 
     try:
-        result = await state.agent.run(prompt, message_history=state.history)
+        async with state.agent.run_stream_events(prompt, message_history=state.history) as events:
+            async for event in events:
+                if isinstance(event, FunctionToolCallEvent):
+                    args = (
+                        event.part.args_as_dict()
+                        if hasattr(event.part, "args_as_dict")
+                        else event.part.args
+                    )
+                    yield _emit({"type": "tool_call", "name": event.part.tool_name, "args": args})
+                elif isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+                    if event.part.content:
+                        yield _emit({"type": "token", "content": event.part.content})
+                elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+                    if event.delta.content_delta:
+                        yield _emit({"type": "token", "content": event.delta.content_delta})
+                elif isinstance(event, AgentRunResultEvent):
+                    full_text = event.result.output
+                    if state.memory:
+                        await state.memory.log_turn("assistant", full_text)
+                    state.history = event.result.all_messages()
+                    yield _emit({"type": "text", "content": full_text})
+                    yield _emit({"type": "done", "session": _session_dict(state)})
     except Exception as exc:  # noqa: BLE001
         yield _emit({"type": "error", "message": str(exc)})
-        return
-
-    # Emit each Context Retriever (and memory) tool call the agent made.
-    for msg in result.new_messages():
-        for part in getattr(msg, "parts", []):
-            if isinstance(part, ToolCallPart):
-                args = part.args_as_dict() if hasattr(part, "args_as_dict") else {}
-                yield _emit({"type": "tool_call", "name": part.tool_name, "args": args})
-
-    yield _emit({"type": "text", "content": result.output})
-
-    if state.memory:
-        await state.memory.log_turn("assistant", result.output)
-
-    state.history = result.all_messages()
-
-    yield _emit({"type": "done", "session": _session_dict(state)})
 
 
 @app.post("/chat")
@@ -188,6 +199,15 @@ async def chat_sync(req: ChatRequest) -> dict:
 @app.get("/session", response_model=SessionInfo)
 async def get_session() -> SessionInfo:
     return SessionInfo(**_session_dict(_require_state()))
+
+
+@app.post("/session/user", response_model=SessionInfo)
+async def set_user(req: SetUserRequest) -> SessionInfo:
+    state = _require_state()
+    state.identity.owner_id = req.owner_id.strip()
+    state.history = []
+    state.active_machine = None
+    return SessionInfo(**_session_dict(state))
 
 
 @app.post("/session/machine", response_model=SessionInfo)

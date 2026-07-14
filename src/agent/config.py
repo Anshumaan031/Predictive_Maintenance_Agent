@@ -20,12 +20,18 @@ class ConfigError(RuntimeError):
     """Raised when required configuration is missing."""
 
 
+DEFAULT_OWNER_ID = "machine-floor"
+DEFAULT_SESSION_ID = "session-1"
+
+
 @dataclass(slots=True)
 class Settings:
     """Resolved runtime settings."""
 
     agent_key: str
     mcp_url: str
+    owner_id: str = DEFAULT_OWNER_ID
+    session_id: str = DEFAULT_SESSION_ID
     # Agent Memory — all three must be present to enable memory. When any is
     # missing the agent runs Context-Retriever-only and memory tools are not
     # registered.
@@ -57,6 +63,8 @@ def load_settings() -> Settings:
     return Settings(
         agent_key=agent_key,
         mcp_url=os.getenv("CTX_MCP_URL", "").strip() or DEFAULT_MCP_URL,
+        owner_id=os.getenv("OWNER_ID", "").strip() or DEFAULT_OWNER_ID,
+        session_id=os.getenv("SESSION_ID", "").strip() or DEFAULT_SESSION_ID,
         memory_endpoint=os.getenv("AGENT_MEMORY_ENDPOINT", "").strip() or None,
         memory_store_id=os.getenv("AGENT_MEMORY_STORE_ID", "").strip() or None,
         memory_key=os.getenv("AGENT_MEMORY_KEY", "").strip() or None,

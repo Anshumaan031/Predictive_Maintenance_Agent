@@ -18,10 +18,16 @@ import sys
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import InMemoryHistory
+from pydantic_ai import (
+    AgentRunResultEvent,
+    FunctionToolCallEvent,
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPartDelta,
+)
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ToolCallPart
+from pydantic_ai.messages import ModelMessage, TextPart
 from rich.console import Console
-from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -34,12 +40,6 @@ from .prompts import HELP
 from ..utils.tool_names import safe_name_map
 
 console = Console()
-
-# Demo identity. In a real multi-user app these come from your auth layer; here
-# one user is hardcoded and the session id is rotated with /newsession.
-# Must match the owner_id in seed_crestforge so pre-seeded memories are found.
-DEFAULT_OWNER_ID = "machine-floor"
-DEFAULT_SESSION_ID = "session-1"
 
 _MAX_INPUT = 8_000
 
@@ -76,24 +76,6 @@ def _banner(settings: Settings, identity: Identity, memory_on: bool) -> Panel:
     body.append(" for commands.", style="dim")
     return Panel(body, border_style="red", title="[bold]iris[/bold]", expand=False)
 
-
-def _render_tool_calls(new_messages: list[ModelMessage]) -> None:
-    """Print a dim line for each Context Retriever tool the agent invoked."""
-    calls: list[ToolCallPart] = [
-        part
-        for message in new_messages
-        for part in getattr(message, "parts", [])
-        if isinstance(part, ToolCallPart)
-    ]
-    for call in calls:
-        args = call.args_as_dict() if hasattr(call, "args_as_dict") else call.args
-        console.print(
-            Text.assemble(
-                ("  ↳ ", "dim"),
-                (call.tool_name, "green"),
-                (f"  {args}", "dim"),
-            )
-        )
 
 
 async def _list_tools(toolset) -> None:
@@ -154,7 +136,7 @@ async def _run() -> int:
     name_map = safe_name_map(tool_names) if tool_names else {}
     agent_toolset = toolset.renamed(name_map) if name_map else toolset
 
-    identity = Identity(owner_id=DEFAULT_OWNER_ID, session_id=DEFAULT_SESSION_ID)
+    identity = Identity(owner_id=settings.owner_id, session_id=settings.session_id)
     active_machine: str | None = None
     memory: MemoryService | None = None
     memory_note = ""
@@ -267,6 +249,24 @@ async def _run() -> int:
                 )
                 continue
 
+            if lowered.startswith("/user"):
+                parts = user_input.split(None, 1)
+                if len(parts) < 2 or not parts[1].strip():
+                    console.print(
+                        "[yellow]Usage: /user <id>  (e.g. /user operator-2)[/yellow]\n"
+                    )
+                else:
+                    new_owner = parts[1].strip()
+                    identity.owner_id = new_owner
+                    history = []
+                    active_machine = None
+                    console.print(
+                        f"[dim]user switched to[/dim] [cyan]{new_owner}[/cyan]"
+                        f"[dim] — history cleared, long-term memory now scoped to "
+                        f"this user. Try asking what it remembers.[/dim]\n"
+                    )
+                continue
+
             if lowered in ("/newshift", "/newsession"):
                 history = []
                 active_machine = None
@@ -314,22 +314,44 @@ async def _run() -> int:
                 await memory.log_turn("user", user_input)
 
             try:
-                with console.status("[red]thinking…[/red]", spinner="dots"):
-                    result = await agent.run(prompt, message_history=history)
+                first_text = True
+                async with agent.run_stream_events(prompt, message_history=history) as events:
+                    async for event in events:
+                        if isinstance(event, FunctionToolCallEvent):
+                            args = (
+                                event.part.args_as_dict()
+                                if hasattr(event.part, "args_as_dict")
+                                else event.part.args
+                            )
+                            console.print(
+                                Text.assemble(
+                                    ("  ↳ ", "dim"),
+                                    (event.part.tool_name, "green"),
+                                    (f"  {args}", "dim"),
+                                )
+                            )
+                        elif isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+                            if first_text:
+                                console.print()
+                                console.print(Text("iris ›", style="bold red"))
+                                first_text = False
+                            if event.part.content:
+                                print(event.part.content, end="", flush=True)
+                        elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+                            if event.delta.content_delta:
+                                print(event.delta.content_delta, end="", flush=True)
+                        elif isinstance(event, AgentRunResultEvent):
+                            if first_text:
+                                console.print()
+                                console.print(Text("iris ›", style="bold red"))
+                            print()
+                            console.print()
+                            if memory:
+                                await memory.log_turn("assistant", event.result.output)
+                            history = event.result.all_messages()
             except Exception as exc:  # noqa: BLE001
                 console.print(f"[red]Error:[/red] {exc}\n")
                 continue
-
-            _render_tool_calls(result.new_messages())
-            console.print()
-            console.print(Text("iris ›", style="bold red"))
-            console.print(Markdown(result.output))
-            console.print()
-
-            if memory:
-                await memory.log_turn("assistant", result.output)
-
-            history = result.all_messages()
 
 
 def main() -> None:

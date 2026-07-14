@@ -44,6 +44,8 @@ HELP = """\
   [cyan]/tools[/cyan]           List the Context Retriever tools the agent can call
   [cyan]/clear[/cyan]           Clear the conversation history (fresh context)
   [cyan]/machine <id>[/cyan]    Set the active machine context (e.g. /machine M104)
+  [cyan]/user <id>[/cyan]       Switch to a different user — new owner scope, fresh history
+                  (e.g. /user operator-2 to demo memory isolation)
   [cyan]/newshift[/cyan]        Start a new shift — clears working memory, long-term
                   memory persists (the cross-shift recall demo)
   [cyan]/newsession[/cyan]      Alias for /newshift
