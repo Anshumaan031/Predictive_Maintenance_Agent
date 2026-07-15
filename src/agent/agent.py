@@ -15,7 +15,7 @@ from pydantic_ai.mcp import MCPToolset
 
 from .config import Settings
 from .model_provider import build_model
-from .prompts import MEMORY_PROMPT, SYSTEM_PROMPT
+from .prompts import MEMORY_PROMPT, SYSTEM_PROMPT, WRITE_TOOLS_PROMPT
 from .tools import attach_write_tools
 
 if TYPE_CHECKING:
@@ -44,7 +44,11 @@ def build_agent(
     ``store_memory`` tools over the user's Agent Memory, plus guidance on when
     to use them.
     """
-    instructions = SYSTEM_PROMPT + (MEMORY_PROMPT if memory else "")
+    instructions = (
+        SYSTEM_PROMPT
+        + (WRITE_TOOLS_PROMPT if redis_client is not None else "")
+        + (MEMORY_PROMPT if memory else "")
+    )
     agent = Agent(
         build_model(),
         toolsets=[toolset],

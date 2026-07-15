@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+_agentkey.tmp
+.git/
+docs/
+UI/
+tests/
+*.md
