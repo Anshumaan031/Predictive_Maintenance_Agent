@@ -2,7 +2,6 @@
 name = "redis-iris-agent"
 version = "0.1.0"
 description = "A Pydantic AI agent that gives an LLM a context layer with Redis Iris: live data via Context Retriever (MCP) and memory via Agent Memory."
-readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [
@@ -21,6 +20,9 @@ dependencies = [
     "fastapi>=0.139.0",
     "prompt-toolkit>=3.0.52",
     "pydantic-ai-slim[anthropic,mcp,openai,google]>=2.2.0",
+    "pylint>=4.0.6",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
     "python-dotenv>=1.2.2",
     "redis>=8.0.1",
     "redis-agent-memory>=0.1.1",

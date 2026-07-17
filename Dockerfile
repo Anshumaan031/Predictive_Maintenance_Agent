@@ -13,7 +13,7 @@ COPY src/ ./src/
 RUN uv sync --frozen
 
 # ---- runtime ----
-FROM python:3.12-slim-bookwor
+FROM python:3.12-slim-bookworm
 
 # Patch system packages to eliminate known CVEs in the base image
 RUN apt-get update \
