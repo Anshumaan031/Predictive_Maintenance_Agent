@@ -12,6 +12,7 @@ Run:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -33,6 +34,7 @@ from pydantic_ai.messages import TextPart, ToolCallPart
 
 from ..agent.config import ConfigError
 from ..agent.model_provider import ModelConfigError
+from . import analytics
 from .models import ChatRequest, SessionInfo, SetMachineRequest, SetUserRequest
 from .state import AppState, create_state
 
@@ -266,6 +268,84 @@ async def list_tools() -> dict:
             for t in tools
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# Data — dynamic Redis analytics
+# ---------------------------------------------------------------------------
+
+
+def _require_redis(state: AppState):
+    if state.redis_client is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Redis direct connection unavailable. Set REDIS_URL in .env.",
+        )
+    return state.redis_client
+
+
+@app.get("/data/schema")
+async def data_schema() -> dict:
+    """Discovered entity types, field types, and inferred FK relationships."""
+    redis = _require_redis(_require_state())
+    return await asyncio.to_thread(analytics.get_schema, redis)
+
+
+@app.get("/data/overview")
+async def data_overview() -> dict:
+    """Entity counts and categorical field distributions across all entities."""
+    redis = _require_redis(_require_state())
+    return await asyncio.to_thread(analytics.get_overview, redis)
+
+
+@app.get("/data/analytics")
+async def data_analytics() -> dict:
+    """Per-entity, per-field statistics: distributions for categoricals,
+    descriptive stats (min/max/mean/median/stdev) for numerics."""
+    redis = _require_redis(_require_state())
+    return await asyncio.to_thread(analytics.get_entity_analytics, redis)
+
+
+@app.get("/data/relationships")
+async def data_relationships() -> dict:
+    """Graph payload — nodes and edges inferred from foreign-key fields
+    across all entity types. Suitable for force-directed graph renderers."""
+    redis = _require_redis(_require_state())
+    return await asyncio.to_thread(analytics.get_relationships_graph, redis)
+
+
+@app.get("/data/entities")
+async def data_entities() -> dict:
+    """List all discovered entity types and their record counts."""
+    redis = _require_redis(_require_state())
+    schema = await asyncio.to_thread(analytics.get_schema, redis)
+    return {
+        "entity_types": [
+            {"name": et, "count": info["count"]}
+            for et, info in schema["entity_types"].items()
+        ]
+    }
+
+
+@app.get("/data/entity/{entity_type}")
+async def data_entity_records(entity_type: str) -> list:
+    """All documents for the given entity type."""
+    redis = _require_redis(_require_state())
+    records = await asyncio.to_thread(analytics.get_entity_records, redis, entity_type)
+    if records is None:
+        raise HTTPException(status_code=404, detail=f"Entity type '{entity_type}' not found.")
+    return records
+
+
+@app.get("/data/entity/{entity_type}/{record_id}")
+async def data_entity_detail(entity_type: str, record_id: str) -> dict:
+    """Single document enriched with all documents it references and all
+    documents that reference it — derived entirely from FK field naming."""
+    redis = _require_redis(_require_state())
+    detail = await asyncio.to_thread(analytics.get_record_detail, redis, entity_type, record_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail=f"{entity_type}:{record_id} not found.")
+    return detail
 
 
 # ---------------------------------------------------------------------------

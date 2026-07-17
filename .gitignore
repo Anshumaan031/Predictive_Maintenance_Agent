@@ -18,3 +18,4 @@ wheels/
 _agentkey.tmp
 CHANGES.md
 .claude
+UI\node_modules

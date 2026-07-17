@@ -21,6 +21,7 @@ from ..utils.tool_names import safe_name_map
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass
 class AppState:
     settings: Settings
@@ -30,8 +31,16 @@ class AppState:
     identity: Identity
     name_map: dict[str, str]
     tool_names: list[str]
+    redis_client: "redis.Redis | None"
     active_machine: str | None = None
     history: list[ModelMessage] = field(default_factory=list)
+
+
+def _connect_redis(url: str) -> "redis.Redis":
+    import redis as redis_lib
+    client = redis_lib.from_url(url, decode_responses=True)
+    client.ping()
+    return client
 
 
 async def create_state() -> tuple[AppState, list[str]]:
@@ -64,6 +73,14 @@ async def create_state() -> tuple[AppState, list[str]]:
 
     agent = build_agent(settings, agent_toolset, memory=memory)
 
+    redis_client = None
+    if settings.redis_url:
+        try:
+            redis_client = _connect_redis(settings.redis_url)
+        except Exception as exc:  # noqa: BLE001
+            warnings.append(f"Redis direct connection failed — /data endpoints unavailable: {exc}")
+            logger.warning("Redis connection failed: %s", exc)
+
     return (
         AppState(
             settings=settings,
@@ -73,6 +90,7 @@ async def create_state() -> tuple[AppState, list[str]]:
             identity=identity,
             name_map=name_map,
             tool_names=tool_names,
+            redis_client=redis_client,
         ),
         warnings,
     )
