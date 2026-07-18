@@ -150,6 +150,91 @@ See [`docs/api/TESTING_GUIDE.md`](docs/api/TESTING_GUIDE.md) for curl examples a
 
 ---
 
+## Running with Docker
+
+Start Redis + API together with networking pre-configured. See [`docs/testing/DOCKER.md`](docs/testing/DOCKER.md).
+
+### Option 1 — Docker Compose (recommended)
+
+```bash
+# Build and start all services
+docker compose up --build
+
+# Run in detached (background) mode
+docker compose up --build -d
+
+# Stop everything
+docker compose down
+```
+
+### Option 2 — Manual Build + Run
+
+Requires a running Redis instance separately.
+
+```bash
+# Build the image
+docker build -t machine-iris-agent .
+
+# Run the container
+docker run --rm -p 8000:8000 --env-file .env -e REDIS_URL=redis://host.docker.internal:6379 machine-iris-agent
+```
+
+### Useful commands
+
+```bash
+# View logs (detached mode)
+docker compose logs -f api
+
+# Rebuild without cache
+docker compose build --no-cache api
+```
+
+### Endpoints
+
+| Service       | URL                     |
+|---------------|-------------------------|
+| API           | http://localhost:8000   |
+| RedisInsight  | http://localhost:8001   |
+
+---
+
+## Running the UI
+
+React + Vite frontend for the Iris agent. Connects to the FastAPI backend at `http://localhost:8000` by default (configurable in the sidebar). See [`docs/UI/DEV.md`](docs/UI/DEV.md).
+
+### Setup
+
+```bash
+cd UI
+npm install
+```
+
+### Run
+
+```bash
+# Start backend first (from project root)
+uvicorn src.api.app:app --reload
+
+# Then start the UI dev server
+cd UI
+npm run dev
+```
+
+Opens at `http://localhost:5173`.
+
+### Build
+
+```bash
+npm run build      # outputs to UI/dist/
+npm run preview    # preview the production build locally
+```
+
+### API URL
+
+The backend URL can be changed at runtime via the input at the bottom of the sidebar. It persists in `localStorage` as `iris_api`.
+
+---
+
 ## CLI commands
 
 | Command | Effect |
