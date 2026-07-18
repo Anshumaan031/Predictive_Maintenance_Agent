@@ -1,4 +1,4 @@
-# Redis Iris Agent
+# Predictive Maintenance Agent
 
 An adaptive agent that acts as a second brain for industrial machine operations: it combines live plant data with durable, cross-shift institutional memory to diagnose faults, triage alerts, and recommend the right action in plain English.
 

@@ -76,6 +76,36 @@ Redis Iris is composed of **five tools**, all running on top of Redis as the und
 
 **Example use case:** A customer support bot needs to answer *"Why is my order late?"* — the answer may live across a customer database, order system, shipping provider, ticketing tool, and policy document. Context Retriever creates a single, governed, agent-readable view that pulls it all together in one flow.
 
+#### Row-Level Security (RLS) via Agent Keys — How It Actually Works
+
+Row-level access is enforced **server-side**, transparently to the agent. There is no client-side filter the LLM could forget or bypass — the agent simply receives fewer rows than an unrestricted caller would. The mechanism has three moving parts:
+
+1. **Data tags (the lock).** Every row written into Redis carries one or more *access tags* declared as part of the surface's semantic data model. Tags are written at seed time and travel with the row. They are the policy: *whoever holds a key allowing tag X may read rows tagged X*.
+
+2. **Agent keys (the key).** An admin uses the `CTX_ADMIN_KEY` to mint a scoped agent key against a surface (`src/crestforge/configure.py:299`, `client.create_agent_key(...)`). The minted key is bound to an allow-list of access tags — that binding is the key's authority. One surface can have many keys, each scoped to a different slice of the data; minting a new key is how you create a new trust boundary (tenant, zone, role, etc.) without changing any query code.
+
+3. **`X-API-Key` on every tool call (the channel).** The agent sends this key as the `X-API-Key` header on every request to the Context Retriever MCP endpoint (`README.md` Configuration → `CONTEXT_RETRIEVER_AGENT_KEY`). Every one of the ~35 auto-generated tools — `get_<entity>_by_id`, `filter_<entity>_by_<field>`, `find_<entity>_by_<field>_range`, `search_<entity>_by_text` — goes through that same authenticated endpoint.
+
+4. **Server-side intersection (the enforcement).** On each tool call, Context Retriever intersects the key's allowed tags with each row's tags and returns only the matching rows. From the LLM's point of view the tool simply returns fewer results — there is no model-side filtering step to get wrong. That is what the README calls "server-side isolation" (`README.md:22`, `README.md:47`) and what Section 9 of this document lists as "Row-level access control ✅ Built-in via access tags".
+
+**Why this shape matters:**
+
+- **No query rewriting per user/tenant.** The same MCP tools serve every agent; only the key differs. A "Zone A technician" agent gets a key tagged `zone_a`; a "Zone B" agent gets `zone_b`; a supervisor gets both. The tool surface is identical — the data visible through it changes.
+- **Policy lives with the data, not the prompt.** Because tags are written into Redis alongside the row, access policy survives schema changes, prompt edits, and model swaps. The LLM cannot "prompt-inject" its way past a tag it doesn't hold.
+- **One key per trust boundary.** Rotating, narrowing, or broadening access = minting/revoking a key, not editing per-tool code. Revoke the key and the agent is instantly blind to those rows.
+- **Composable with Agent Memory isolation.** Context Retriever RLS (agent keys + data tags) controls *structured data* visibility; Agent Memory's `owner_id` scoping (see §4.2) controls *memory* visibility. Together they give full per-user isolation: one user can never read another user's rows or memories.
+
+**Where the wiring shows up in this repo:**
+
+| Step | File / location | What happens |
+|---|---|---|
+| Entity schema + tag-able fields declared | `src/crestforge/configure.py:50` (and the other `ContextModel` classes) | `ContextField(...)` declarations define which fields are indexed and taggable on the surface |
+| Surface created/updated with the data model | `src/crestforge/configure.py:274` (`create_context_surface`) / `:265` (`update_context_surface`) | Pushes the entity model + data source to Context Retriever; tools auto-generate from it |
+| Agent key minted against the surface | `src/crestforge/configure.py:299` (`create_agent_key`) | Produces a scoped key bound to the surface's access tags; written to `_agentkey.tmp` |
+| Key loaded into the agent's env | `.env` → `CONTEXT_RETRIEVER_AGENT_KEY` (`README.md:333`) | Runtime config consumed by `src/agent/agent.py` / `src/agent/config.py` |
+| Key sent on every MCP call | `src/agent/agent.py` (MCPToolset construction) | Pydantic AI's MCP client attaches `X-API-Key` to each Context Retriever request |
+| Server enforces tag intersection | Context Retriever service (Redis Cloud) | Returns only rows whose tags match the key's allow-list |
+
 ---
 
 ### 4.2 Redis Agent Memory
