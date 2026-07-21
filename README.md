@@ -25,6 +25,28 @@ The agent never touches operational systems directly. It only talks to Redis, th
 
 ---
 
+## Screenshots
+
+### Chat
+
+The agent answers in plain English, pulling live machine state and recalled fault history into a confident recommendation.
+
+![Chat](assets/chat.png)
+
+### Analytics
+
+Live telemetry and fault trends surfaced through the same tool surface the agent queries at runtime.
+
+![Analytics](assets/analytics.png)
+
+### Tools
+
+The Context Retriever MCP tool layer — typed, named tools auto-generated from the semantic data model.
+
+![Tools](assets/tools.png)
+
+---
+
 ## What is new here
 
 ### Context Retriever as an MCP tool layer

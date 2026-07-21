@@ -38,7 +38,7 @@ from .config import ConfigError, Settings, load_settings
 from .memory import Identity, MemoryService
 from .model_provider import ModelConfigError
 from .prompts import HELP
-from ..utils.tool_names import safe_name_map
+from utils.tool_names import safe_name_map
 
 console = Console()
 
