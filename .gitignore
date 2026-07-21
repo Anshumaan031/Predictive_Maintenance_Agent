@@ -21,3 +21,6 @@ CHANGES.md
 UI/node_modules/
 UI/dist/
 UI/build/
+
+# internal docs — not published to the remote repo
+docs/

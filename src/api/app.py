@@ -32,8 +32,8 @@ from pydantic_ai import (
 )
 from pydantic_ai.messages import TextPart, ToolCallPart
 
-from ..agent.config import ConfigError
-from ..agent.model_provider import ModelConfigError
+from agent.config import ConfigError
+from agent.model_provider import ModelConfigError
 from . import analytics
 from .models import ChatRequest, SessionInfo, SetMachineRequest, SetUserRequest
 from .state import AppState, create_state

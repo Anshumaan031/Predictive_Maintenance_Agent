@@ -14,10 +14,10 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.messages import ModelMessage
 
-from ..agent.agent import build_agent, build_toolset
-from ..agent.config import Settings, load_settings
-from ..agent.memory import Identity, MemoryService
-from ..utils.tool_names import safe_name_map
+from agent.agent import build_agent, build_toolset
+from agent.config import Settings, load_settings
+from agent.memory import Identity, MemoryService
+from utils.tool_names import safe_name_map
 
 logger = logging.getLogger(__name__)
 
