@@ -45,6 +45,12 @@ The Context Retriever MCP tool layer — typed, named tools auto-generated from 
 
 ![Tools](assets/tools.png)
 
+### CLI
+
+The Rich/prompt-toolkit chat REPL — chat with the agent, switch machines, rotate shifts, and inspect tools without leaving the terminal.
+
+![CLI](assets/cli.png)
+
 ---
 
 ## What is new here
